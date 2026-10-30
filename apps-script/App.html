@@ -1,0 +1,885 @@
+<script>
+(function () {
+  'use strict';
+
+  var S = {
+    app: null, dash: null, period: '7', view: 'inicio', history: [], photos: {}, closing: null,
+    turnoMode: 'saida', drivers: null, eqFilter: 'ativos', driver: null, dashStale: true, driversStale: true, metric: 'corridas'
+  };
+  var $ = function (s, el) { return (el || document).querySelector(s); };
+  var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
+
+  /* ============================== ícones ============================== */
+
+  var ICONS = {
+    home: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/>',
+    moto: '<circle cx="5.5" cy="16.5" r="3"/><circle cx="18.5" cy="16.5" r="3"/><path d="M5.5 16.5h6l3-6h-4M14.5 10.5l1-3h3M18.5 16.5l-3-6"/>',
+    fuel: '<path d="M4 20V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v15"/><path d="M3 20h12M4 10h10"/><path d="M14 8l3 2v7a1.5 1.5 0 0 0 3 0V9l-3-3"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>',
+    grid: '<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>',
+    camera: '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
+    out: '<path d="M10 4H5v16h5"/><path d="M14 12h7M18 8l4 4-4 4"/>',
+    in: '<path d="M14 4h5v16h-5"/><path d="M3 12h10M9 8l4 4-4 4"/>',
+    money: '<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M7 9v.01M17 15v.01"/>',
+    wrench: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>',
+    id: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6 16a3 3 0 0 1 6 0M14 10h4M14 14h3"/>',
+    doc: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+    back: '<path d="M15 18l-6-6 6-6"/>',
+    chev: '<path d="M9 18l6-6-6-6"/>',
+    sheet: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 3v18"/>',
+    folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+    chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+    check: '<path d="M5 12l5 5L20 7"/>',
+    phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
+    alert: '<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17v.01"/>',
+    eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'
+  };
+  function icon(name) { return '<svg class="i" viewBox="0 0 24 24">' + (ICONS[name] || ICONS.alert) + '</svg>'; }
+  function paintIcons(root) {
+    $$('svg[data-i]', root).forEach(function (s) { s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = ICONS[s.dataset.i] || ''; s.removeAttribute('data-i'); });
+  }
+
+  /* ============================== utilidades ============================== */
+
+  function run(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      var r = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+      r[fn].apply(r, args);
+    });
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function num(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    var s = String(v).replace(/R\$/gi, '').replace(/\s/g, '');
+    if (!s) return null;
+    if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.');
+    var n = Number(s);
+    return isFinite(n) ? n : null;
+  }
+  function nf(n, d) { if (n == null || !isFinite(n)) return '—'; d = d || 0; return Number(n).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d }); }
+  function money(n) { return n == null || !isFinite(n) ? '—' : Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+  function moneyShort(n) {
+    if (n == null) return '—';
+    var a = Math.abs(n), s = n < 0 ? '-' : '';
+    if (a >= 1000) return s + 'R$ ' + nf(a / 1000, a >= 10000 ? 0 : 1) + ' mil';
+    return s + 'R$ ' + nf(a, 0);
+  }
+  function dmy(k) { if (!k) return ''; var p = k.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
+  function dm(k) { var p = k.split('-'); return p[2] + '/' + p[1]; }
+  function kdate(k) { var p = k.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  function weekday(k) { return kdate(k).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', ''); }
+  function initials(n) { var p = String(n || '?').trim().split(/\s+/); return ((p[0] || '')[0] || '') + (p.length > 1 ? p[p.length - 1][0] : ''); }
+  function firstNames(n, k) { return String(n || '').split(/\s+/).slice(0, k || 2).join(' '); }
+  function errMsg(e) { return (e && e.message ? e.message : String(e)).replace(/^Error:\s*/, '').replace(/^SEM_ACESSO:\s*/, ''); }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem('frota.' + k) || ''; localStorage.setItem('frota.' + k, v); } catch (e) { return ''; } }
+
+  var toastT;
+  function toast(msg, err) {
+    var t = $('#toast'); t.textContent = msg; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false;
+    clearTimeout(toastT); toastT = setTimeout(function () { t.hidden = true; }, err ? 7000 : 4000);
+  }
+  function busy(btn, on, label) {
+    if (on) { btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="spin"></span>' + (label || 'Salvando…'); }
+    else { btn.disabled = false; if (btn.dataset.label) btn.innerHTML = btn.dataset.label; }
+  }
+  function field(form, name) { return form.elements.namedItem(name); }
+  function today() { return S.app ? S.app.today : new Date().toISOString().slice(0, 10); }
+  function sheetRow(row) { return S.app.sheetUrl + '#gid=' + S.app.regGid + '&range=A' + row; }
+
+  /* ============================== fotos e arquivos ============================== */
+
+  function compressImage(file, maxSide, q) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        var s = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+        var c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL('image/jpeg', q));
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Não consegui abrir essa foto. Tente de novo.')); };
+      img.src = url;
+    });
+  }
+  function readUpload(file) {
+    if (/^image\//.test(file.type)) return compressImage(file, 2000, 0.82).then(function (u) { return { data: u.split(',')[1], mime: 'image/jpeg', name: file.name }; });
+    if (file.type !== 'application/pdf') return Promise.reject(new Error('Envie uma foto ou um PDF.'));
+    if (file.size > 10 * 1024 * 1024) return Promise.reject(new Error('PDF muito grande (máximo 10 MB).'));
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve({ data: String(r.result).split(',')[1], mime: 'application/pdf', name: file.name }); };
+      r.onerror = function () { reject(new Error('Não consegui ler o arquivo.')); };
+      r.readAsDataURL(file);
+    });
+  }
+  function setPhoto(key, url) {
+    var box = $('.photo[data-photo="' + key + '"]');
+    if (!box) return;
+    var prev = $('.photo-prev', box), lbl = $('.lbl', box);
+    if (!lbl.dataset.orig) lbl.dataset.orig = lbl.textContent;
+    if (url) {
+      S.photos[key] = { data: url.split(',')[1], mime: 'image/jpeg' };
+      $('img', prev).src = url; prev.hidden = false; box.classList.add('has'); lbl.textContent = 'Trocar';
+    } else {
+      delete S.photos[key];
+      $('img', prev).removeAttribute('src'); prev.hidden = true; box.classList.remove('has');
+      lbl.textContent = lbl.dataset.orig; $('input[type=file]', box).value = '';
+    }
+  }
+  function photo(key) { return S.photos[key] || null; }
+  function clearPhotos(form) { $$('.photo', form).forEach(function (b) { setPhoto(b.dataset.photo, null); }); }
+
+  /* ============================== navegação ============================== */
+
+  var PARENT = { entregador: 'equipe', receita: 'mais', manutencao: 'mais', motos: 'mais' };
+  var ENTER = {};
+
+  function go(view, opts, fromBack) {
+    if (!fromBack) {
+      if (PARENT[view] && S.view !== view) S.history.push(S.view);
+      else if (!PARENT[view]) S.history = [];
+    }
+    S.view = view;
+    $$('section.view').forEach(function (s) { s.hidden = s.dataset.view !== view; });
+    var sec = $('section[data-view="' + view + '"]');
+    var tab = PARENT[view] || view;
+    $$('.tab').forEach(function (t) { t.setAttribute('aria-current', t.dataset.tab === tab); });
+    var isHome = view === 'inicio';
+    $('#btn-back').hidden = !PARENT[view];
+    $('#top-mark').hidden = !!PARENT[view];
+    $('#top-word').hidden = !isHome;
+    $('#top-title').hidden = isHome;
+    $('#top-sp').hidden = !isHome;
+    $('#top-title').textContent = sec ? sec.dataset.title : '';
+    window.scrollTo(0, 0);
+    if (ENTER[view]) ENTER[view](opts || {});
+  }
+  function back() { go(S.history.pop() || PARENT[S.view] || 'inicio', {}, true); }
+
+  /* ============================== carregamento ============================== */
+
+  function loadApp() {
+    return run('getApp').then(function (a) { S.app = a; renderApp(); })
+      .catch(function (e) {
+        var m = errMsg(e);
+        if (/SEM_ACESSO|permiss|access/i.test(e && e.message || '')) { showNoAccess(m); return; }
+        toast('Erro ao carregar: ' + m, true);
+      }).then(hideSplash);
+  }
+  function hideSplash() { var s = $('#splash'); if (!s || s.classList.contains('out')) return; s.classList.add('out'); setTimeout(function () { s.remove(); }, 400); }
+  function showNoAccess(msg) {
+    $$('section.view').forEach(function (s) { s.hidden = true; });
+    $('.tabbar').hidden = true;
+    $('#noaccess').hidden = false;
+    $('#noaccess-msg').textContent = msg;
+  }
+  function refresh() { S.dashStale = true; S.driversStale = true; return loadApp().then(function () { if (S.view === 'inicio') loadDash(); }); }
+
+  function renderApp() {
+    var a = S.app;
+    $('#sheet-link').href = a.sheetUrl; $('#m-sheet').href = a.sheetUrl;
+    if (a.folderUrl) $('#m-folder').href = a.folderUrl; else $('#m-folder').hidden = true;
+    $('#m-user').textContent = a.user ? 'Conectado como ' + a.user : '';
+    var dl = function (id, list) { $(id).innerHTML = list.map(function (n) { return '<option value="' + esc(n) + '">'; }).join(''); };
+    dl('#dl-ent', a.entregadores); dl('#dl-turnos', a.turnos); dl('#dl-resp', a.responsaveis);
+    dl('#dl-oco', ['TUDO OK'].concat(a.ocorrencias.filter(function (o) { return o !== 'TUDO OK'; }))); dl('#dl-postos', a.postos);
+    $$('[data-turnos]').forEach(function (el) {
+      el.innerHTML = a.turnos.slice(0, 5).map(function (t) { return '<button type="button" class="opt sm" data-turno="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
+    });
+    $$('select[data-status]').forEach(function (sel) {
+      sel.innerHTML = a.statusOptions.map(function (o) { return '<option>' + esc(o) + '</option>'; }).join('');
+      sel.value = a.statusOptions.filter(function (o) { return /FINAL|DEVOL|DISPON|PARAD|RECOLH|GARAG/i.test(o); })[0] || a.statusOptions[0];
+    });
+    $('#m-tipos').innerHTML = a.manutTipos.map(function (t) { return '<button type="button" class="opt sm" data-tipo="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
+    $$('form').forEach(function (f) { renderMotoChips(f); });
+    $$('input[type=date]').forEach(function (i) { if (!i.value && i.name === 'data') i.value = a.today; });
+    ['#s-rec', '#c-rec', '#c-dev', '#r-dev'].forEach(function (id) { var i = $(id); if (i && !i.value) i.value = store('resp'); });
+
+    var n = a.openShifts.length;
+    $('#dot-rua').hidden = !n; $('#dot-rua').textContent = n;
+    $('#ret-count').textContent = n ? '(' + n + ')' : '';
+    $('#h-rua').textContent = n + '/' + a.motos.length;
+    var h = new Date().getHours();
+    $('#h-hello').textContent = h < 12 ? 'Bom dia!' : h < 18 ? 'Boa tarde!' : 'Boa noite!';
+    var dt = kdate(a.today).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+    $('#h-date').textContent = dt.charAt(0).toUpperCase() + dt.slice(1);
+
+    renderRua(); renderTurnos(); renderFuel(); renderRec(); renderManut();
+  }
+
+  /* ============================== motos nos formulários ============================== */
+
+  function motoById(id) { return S.app && S.app.motos.filter(function (m) { return m.id === id; })[0]; }
+
+  function renderMotoChips(form) {
+    var box = $('[data-motos]', form);
+    if (!box || !S.app) return;
+    var sel = form.dataset.moto || '';
+    box.innerHTML = S.app.motos.map(function (m) {
+      var sub = m.open ? '● na rua' : m.lastKm != null ? nf(m.lastKm) + ' km' : 'sem KM';
+      return '<button type="button" class="opt" data-moto="' + esc(m.id) + '" aria-pressed="' + (sel === m.id) + '">' + esc(m.id) + '<small>' + sub + '</small></button>';
+    }).join('');
+  }
+  function pickMoto(form, id) {
+    form.dataset.moto = id;
+    renderMotoChips(form);
+    var m = motoById(id);
+    $$('[data-autokm]', form).forEach(function (inp) {
+      if (m && m.lastKm != null && (inp.value === '' || inp.dataset.auto === '1')) { inp.value = m.lastKm; inp.dataset.auto = '1'; }
+    });
+    kmHint(form);
+    var al = $('[data-moto-alert]', form);
+    if (al) {
+      al.innerHTML = m && m.open ? '<div class="note" style="margin-top:8px">Esta moto já está na rua com <b>' + esc(m.open.entregador) + '</b> (' + esc(m.open.turno) +
+        ', desde ' + esc(m.open.dataFmt) + '). <button type="button" class="btn sm ghost" data-ret="' + m.open.row + '">Registrar retorno</button></div>' : '';
+    }
+  }
+  function kmHint(form) {
+    var inp = $('[data-autokm]', form), h = $('[data-kmhint]', form);
+    if (!inp || !h) return;
+    var m = motoById(form.dataset.moto), v = num(inp.value);
+    h.className = 'hint'; h.textContent = '';
+    if (!m || m.lastKm == null) return;
+    if (v === m.lastKm) h.textContent = 'Último KM registrado desta moto';
+    else if (v != null && v < m.lastKm) { h.className = 'hint warn'; h.textContent = 'Menor que o último KM registrado (' + nf(m.lastKm) + ').'; }
+    else if (v != null) { h.className = 'hint warn'; h.textContent = '+' + nf(v - m.lastKm) + ' km desde o último registro (' + nf(m.lastKm) + ').'; }
+  }
+
+  function resetForm(form) {
+    form.reset();
+    delete form.dataset.moto;
+    clearPhotos(form);
+    renderMotoChips(form);
+    $$('[data-autokm]', form).forEach(function (i) { i.dataset.auto = '1'; });
+    $$('[data-kmhint],[data-moto-alert]', form).forEach(function (h) { h.innerHTML = ''; });
+    $$('input[type=date][name=data]', form).forEach(function (i) { i.value = today(); });
+    $$('.check-opt', form).forEach(function (b) { b.setAttribute('aria-pressed', 'true'); });
+    $$('[data-tipo]', form).forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+    delete form.dataset.tipo;
+    ['recebido', 'devolvido'].forEach(function (n) { var i = field(form, n); if (i) i.value = store('resp'); });
+    $$('select[data-status]', form).forEach(function (sel) {
+      var a = S.app.statusOptions;
+      sel.value = a.filter(function (o) { return /FINAL|DEVOL|DISPON|PARAD|RECOLH|GARAG/i.test(o); })[0] || a[0];
+    });
+    $$('[data-calc] b', form).forEach(function (b) { b.textContent = '—'; });
+  }
+
+  function calcTurno(form, kmIni) {
+    var calc = $('[data-calc]', form);
+    if (!calc) return;
+    var meta = S.app ? S.app.config.meta : 12;
+    var kmFim = num(field(form, 'kmFim').value), corr = num(field(form, 'corridas').value);
+    var km = kmIni != null && kmFim != null ? kmFim - kmIni : null;
+    $('[data-o=km]', calc).textContent = km != null && km >= 0 ? nf(km) + ' km' : '—';
+    $('[data-o=meta]', calc).textContent = meta + ' corridas';
+    $('[data-o=bateu]', calc).textContent = corr == null ? '—' : corr >= meta ? '✓ Bateu' : '✕ Não bateu';
+    return km;
+  }
+
+  /* ============================== TURNOS ============================== */
+
+  ENTER.turnos = function (o) { setTurnoMode(o.mode || o.modo || S.turnoMode); };
+
+  function setTurnoMode(mode) {
+    S.turnoMode = mode;
+    $$('#turno-seg button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.mode === mode); });
+    $('#f-saida').hidden = mode !== 'saida';
+    $('#retorno-pane').hidden = mode !== 'retorno';
+    $('#f-completo').hidden = mode !== 'completo';
+  }
+
+  function renderRua() {
+    var list = S.app.openShifts;
+    $('#list-rua').innerHTML = list.length ? list.map(function (o) {
+      return '<div class="item"><span class="ico">' + icon('moto') + '</span><div class="main"><div class="t">' + esc(o.moto) + ' · ' + esc(o.entregador || 'sem entregador') + '</div>' +
+        '<div class="s">' + esc(o.turno || '—') + ' · saiu ' + esc(o.dataFmt) + (o.horaSaida ? ' às ' + esc(o.horaSaida) : '') + ' com ' + nf(o.kmIni) + ' km</div>' + photoLinks(o) + '</div>' +
+        '<button type="button" class="btn sm primary" style="flex:none" data-ret="' + o.row + '">Retorno</button></div>';
+    }).join('') : '<div class="card empty">Nenhuma moto na rua agora. 🎉</div>';
+  }
+
+  function photoLinks(r) {
+    var o = [];
+    if (r.fotoIni) o.push('<a href="' + esc(r.fotoIni) + '" target="_blank" rel="noopener">📷 saída</a>');
+    if (r.fotoFim) o.push('<a href="' + esc(r.fotoFim) + '" target="_blank" rel="noopener">📷 retorno</a>');
+    if (r.fotoCupom) o.push('<a href="' + esc(r.fotoCupom) + '" target="_blank" rel="noopener">🧾 cupom</a>');
+    if (r.fotoPainel) o.push('<a href="' + esc(r.fotoPainel) + '" target="_blank" rel="noopener">📷 painel</a>');
+    if (r.foto) o.push('<a href="' + esc(r.foto) + '" target="_blank" rel="noopener">🧾 nota</a>');
+    return o.length ? '<div class="links">' + o.join('') + '</div>' : '';
+  }
+
+  function renderTurnos() {
+    var meta = S.app.config.meta;
+    var list = S.app.recentTurnos;
+    $('#list-turnos').innerHTML = list.length ? list.map(function (r) {
+      var pill = r.kmFim == null ? '<span class="pill run">na rua</span>' : r.corridas == null ? '<span class="pill muted">sem corridas</span>' :
+        r.corridas >= meta ? '<span class="pill ok">✓ ' + r.corridas + '</span>' : '<span class="pill warn">' + r.corridas + '/' + meta + '</span>';
+      var km = r.kmFim == null ? 'saiu com ' + nf(r.kmIni) + ' km' : nf(r.kmRodCalc) + ' km rodados';
+      return '<div class="item"><div class="main"><div class="t">' + esc(r.dataFmt) + ' · ' + esc(r.moto) + ' · ' + esc(firstNames(r.entregador) || '—') + '</div>' +
+        '<div class="s">' + esc(r.turno || 'sem turno') + ' · ' + km + (r.checklist && r.checklist !== 'OK' ? ' · ⚠ ' + esc(r.checklist) : '') + '</div>' + photoLinks(r) + '</div>' + pill + '</div>';
+    }).join('') : '<div class="empty">Nenhum turno ainda.</div>';
+  }
+
+  function submitSaida(ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    var check = {};
+    $$('.check-opt', f).forEach(function (b) { check[b.dataset.check] = b.getAttribute('aria-pressed') === 'true'; });
+    var p = { data: field(f, 'data').value || today(), moto: f.dataset.moto, entregador: field(f, 'entregador').value.trim(), turno: field(f, 'turno').value.trim(),
+      kmIni: num(field(f, 'kmIni').value), recebido: field(f, 'recebido').value.trim(), checklist: check, fotoIni: photo('s-ini') };
+    var err = !p.moto ? 'Escolha a moto.' : !p.entregador ? 'Informe o entregador.' : !p.turno ? 'Informe o turno.' : p.kmIni == null ? 'Informe o KM de saída.' : null;
+    if (err) return toast(err, true);
+    store('resp', p.recebido);
+    send(f, 'openShift', p, p.fotoIni ? 'Enviando foto…' : null, function (res) {
+      if (/turno aberto/i.test(res) && confirm(res)) { p.forcar = true; return true; }
+    });
+  }
+
+  function send(form, fn, p, busyLabel, onErrRetry) {
+    var btn = $('button[type=submit]', form);
+    busy(btn, true, busyLabel);
+    return run(fn, p).catch(function (e) {
+      if (onErrRetry && onErrRetry(errMsg(e))) return run(fn, p);
+      throw e;
+    }).then(function (res) {
+      toast(res.msg);
+      resetForm(form);
+      return refresh();
+    }).catch(function (e) { toast(errMsg(e), true); }).then(function () { busy(btn, false); });
+  }
+
+  function openRet(row) {
+    var o = S.app.openShifts.filter(function (x) { return x.row === row; })[0] ||
+      (S.app.motos.filter(function (m) { return m.open && m.open.row === row; })[0] || {}).open;
+    if (!o) return toast('Turno não encontrado. Atualize a página.', true);
+    S.closing = o;
+    var f = $('#f-ret');
+    resetForm(f);
+    $('#ret-resumo').innerHTML = '<span><b>' + esc(o.moto) + '</b></span><span>' + esc(o.entregador || '—') + '</span><span>' + esc(o.turno || '') +
+      '</span><span>saiu ' + esc(o.dataFmt) + (o.horaSaida ? ' ' + esc(o.horaSaida) : '') + ' com <b>' + nf(o.kmIni) + ' km</b></span>' +
+      (o.fotoIni ? '<span><a href="' + esc(o.fotoIni) + '" target="_blank" rel="noopener">📷 foto da saída</a></span>' : '');
+    $('#r-kmhint').textContent = 'Saiu com ' + nf(o.kmIni) + ' km';
+    calcTurno(f, o.kmIni);
+    $('#dlg-ret').showModal();
+  }
+
+  function submitRet(ev) {
+    ev.preventDefault();
+    var f = ev.target, o = S.closing;
+    var p = { moto: o.moto, kmFim: num(field(f, 'kmFim').value), corridas: num(field(f, 'corridas').value), devolvido: field(f, 'devolvido').value.trim(),
+      status: field(f, 'status').value, ocorrencia: field(f, 'ocorrencia').value.trim(), fotoFim: photo('r-fim') };
+    var err = p.kmFim == null ? 'Informe o KM de retorno.' : p.kmFim < o.kmIni ? 'KM de retorno menor que o de saída (' + nf(o.kmIni) + ').' :
+      p.corridas == null ? 'Informe as corridas (0 se nenhuma).' : null;
+    if (err) return toast(err, true);
+    if (p.kmFim - o.kmIni > 300 && !confirm('Foram ' + (p.kmFim - o.kmIni) + ' km neste turno. Está certo?')) return;
+    store('resp', p.devolvido);
+    var btn = $('button[type=submit]', f);
+    busy(btn, true, p.fotoFim ? 'Enviando foto…' : null);
+    run('closeShift', o.row, p).then(function (res) {
+      $('#dlg-ret').close(); toast(res.msg); resetForm(f); return refresh();
+    }).catch(function (e) { toast(errMsg(e), true); }).then(function () { busy(btn, false); });
+  }
+
+  function submitCompleto(ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    var p = { data: field(f, 'data').value, moto: f.dataset.moto, entregador: field(f, 'entregador').value.trim(), turno: field(f, 'turno').value.trim(),
+      kmIni: num(field(f, 'kmIni').value), kmFim: num(field(f, 'kmFim').value), corridas: num(field(f, 'corridas').value),
+      recebido: field(f, 'recebido').value.trim(), devolvido: field(f, 'devolvido').value.trim(), status: field(f, 'status').value,
+      ocorrencia: field(f, 'ocorrencia').value.trim(), fotoIni: photo('c-ini'), fotoFim: photo('c-fim') };
+    var err = !p.moto ? 'Escolha a moto.' : !p.data ? 'Informe a data.' : !p.entregador ? 'Informe o entregador.' : !p.turno ? 'Informe o turno.' :
+      p.kmIni == null ? 'Informe o KM de saída.' : p.kmFim == null ? 'Informe o KM de retorno.' : p.kmFim < p.kmIni ? 'KM de retorno menor que o de saída.' :
+      p.corridas == null ? 'Informe as corridas.' : null;
+    if (err) return toast(err, true);
+    send(f, 'saveFullShift', p, p.fotoIni || p.fotoFim ? 'Enviando fotos…' : null);
+  }
+
+  /* ============================== ABASTECER ============================== */
+
+  function renderFuel() {
+    var list = S.app.recentFuel;
+    $('#fuel-mes').textContent = 'No mês: ' + money(S.app.combustivelMes);
+    $('#list-fuel').innerHTML = list.length ? list.map(function (f) {
+      var info = [f.litros ? nf(f.litros, 2) + ' L' : null, f.preco ? money(f.preco) + '/L' : null, f.km != null ? nf(f.km) + ' km' : null, f.posto || null].filter(Boolean).join(' · ');
+      return '<div class="item"><span class="ico">' + icon('fuel') + '</span><div class="main"><div class="t">' + esc(f.dataFmt.slice(0, 5)) + ' · ' + esc(f.moto) + '</div><div class="s">' + esc(info) +
+        (f.cheio === false ? ' · parcial' : '') + '</div>' + photoLinks(f) + '</div><div class="r">' + money(f.valor) +
+        (f.consumo ? '<small>' + nf(f.consumo.kml, 1) + ' km/l</small>' : '') + '</div></div>';
+    }).join('') : '<div class="empty">Nenhum abastecimento lançado ainda.</div>';
+  }
+
+  function precoLitro() {
+    var f = $('#f-abast'), v = num(field(f, 'valor').value), l = num(field(f, 'litros').value);
+    $('#a-preco').textContent = v > 0 && l > 0 ? 'Preço do litro: ' + money(v / l) : '';
+  }
+
+  function submitAbast(ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    var p = { data: field(f, 'data').value || today(), moto: f.dataset.moto, valor: num(field(f, 'valor').value), litros: num(field(f, 'litros').value),
+      km: num(field(f, 'km').value), cheio: $('#a-cheio [aria-pressed="true"]').dataset.v === '1', posto: field(f, 'posto').value.trim(),
+      entregador: field(f, 'entregador').value.trim(), obs: field(f, 'obs').value.trim(), fotoCupom: photo('a-cupom'), fotoPainel: photo('a-painel') };
+    var err = !p.moto ? 'Escolha a moto.' : !(p.valor > 0) ? 'Informe o valor pago.' : null;
+    if (err) return toast(err, true);
+    if (p.cheio && (p.km == null || !p.litros)) { if (!confirm('Sem KM ou litros o consumo não pode ser calculado. Salvar assim mesmo?')) return; }
+    send(f, 'saveFuel', p, p.fotoCupom || p.fotoPainel ? 'Enviando fotos…' : null).then(function () { precoLitro(); });
+  }
+
+  /* ============================== RECEITA ============================== */
+
+  ENTER.receita = function () { var i = $('#r-data'); if (!i.value) i.value = today(); };
+
+  function renderRec() {
+    $('#rec-mes').textContent = 'No mês: ' + money(S.app.receitaMes);
+    var list = S.app.recentRec;
+    $('#list-rec').innerHTML = list.length ? list.map(function (r) {
+      return '<div class="item"><span class="ico">' + icon('money') + '</span><div class="main"><div class="t">' + esc(r.dataFmt) + '</div><div class="s">' + esc(r.descricao || '—') +
+        '</div></div><div class="r">' + money(r.valor) + '</div></div>';
+    }).join('') : '<div class="empty">Nenhuma receita lançada ainda.</div>';
+  }
+
+  function submitRec(ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    var p = { data: field(f, 'data').value || today(), valor: num(field(f, 'valor').value), descricao: field(f, 'descricao').value.trim() };
+    if (!(p.valor > 0)) return toast('Informe o valor recebido.', true);
+    send(f, 'saveRevenue', p);
+  }
+
+  /* ============================== MANUTENÇÃO ============================== */
+
+  ENTER.manutencao = function (o) {
+    var f = $('#f-manut');
+    if (o.moto) pickMoto(f, o.moto);
+    if (o.tipo) pickTipo(o.tipo);
+  };
+  function pickTipo(t) {
+    var f = $('#f-manut');
+    f.dataset.tipo = t;
+    $$('[data-tipo]', f).forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.tipo === t); });
+    $('#m-rev-hint').hidden = t !== 'Revisão';
+  }
+  function manutTotal() {
+    var f = $('#f-manut'), a = num(field(f, 'pecas').value) || 0, b = num(field(f, 'maoObra').value) || 0;
+    $('#m-total').textContent = a + b > 0 ? 'Total: ' + money(a + b) : '';
+  }
+  function renderManut() {
+    var list = S.app.recentManut;
+    $('#list-manut').innerHTML = list.length ? list.map(function (m) {
+      return '<div class="item"><span class="ico">' + icon('wrench') + '</span><div class="main"><div class="t">' + esc(m.dataFmt) + ' · ' + esc(m.moto) + ' · ' + esc(m.tipo) + '</div>' +
+        '<div class="s">' + esc([m.descricao, m.km != null ? nf(m.km) + ' km' : '', m.oficina].filter(Boolean).join(' · ') || '—') + '</div>' + photoLinks(m) + '</div><div class="r">' + money(m.total) + '</div></div>';
+    }).join('') : '<div class="empty">Nenhuma manutenção lançada ainda.</div>';
+  }
+  function submitManut(ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    var p = { data: field(f, 'data').value || today(), moto: f.dataset.moto, tipo: f.dataset.tipo, km: num(field(f, 'km').value), descricao: field(f, 'descricao').value.trim(),
+      pecas: num(field(f, 'pecas').value), maoObra: num(field(f, 'maoObra').value), oficina: field(f, 'oficina').value.trim(), foto: photo('m-nota') };
+    var err = !p.moto ? 'Escolha a moto.' : !p.tipo ? 'Escolha o tipo.' : p.tipo === 'Revisão' && p.km == null ? 'Informe o KM da revisão.' : null;
+    if (err) return toast(err, true);
+    send(f, 'saveMaintenance', p, p.foto ? 'Enviando foto…' : null).then(function () { $('#m-total').textContent = ''; $('#m-rev-hint').hidden = true; });
+  }
+
+  /* ============================== MOTOS ============================== */
+
+  ENTER.motos = function () {
+    if (S.dash && !S.dashStale) return renderMotosView();
+    $('#motos-list').innerHTML = '<div class="skeleton"></div>';
+    loadDash().then(renderMotosView);
+  };
+  function renderMotosView() { if (S.dash) $('#motos-list').innerHTML = S.dash.motos.map(motoCard).join('') || '<div class="empty">Nenhuma moto na aba Frota.</div>'; }
+
+  function motoCard(m) {
+    var revKm = S.dash.config.revKm || 3000;
+    var used = m.faltam == null ? 0 : Math.max(0, Math.min(1, (revKm - m.faltam) / revKm));
+    var cls = m.alerta === 'VENCIDA' ? 'crit' : m.alerta === 'PRÓXIMA' ? 'warn' : '';
+    var pill = m.alerta === 'VENCIDA' ? '<span class="pill crit">✕ Revisão vencida</span>' : m.alerta === 'PRÓXIMA' ? '<span class="pill warn">! Revisão próxima</span>' :
+      m.alerta === 'OK' ? '<span class="pill ok">✓ Revisão em dia</span>' : '<span class="pill muted">Sem dados</span>';
+    var status = m.rodando ? '<span class="pill run">● ' + esc(firstNames(m.rodando.entregador)) + '</span>' : '<span class="pill muted">parada</span>';
+    var falta = m.faltam == null ? '—' : m.faltam <= 0 ? 'passou ' + nf(-m.faltam) + ' km' : 'faltam ' + nf(m.faltam) + ' km';
+    return '<div class="moto"><div class="top"><div><div class="id">' + esc(m.id) + '</div><div class="small muted">' + esc(m.modelo) + '</div></div>' + pill + '</div>' +
+      '<div class="km">' + nf(m.kmAtual) + ' <small>km</small></div><div>' + status + '</div>' +
+      '<div class="bar ' + cls + '"><span style="width:' + (used * 100).toFixed(1) + '%"></span></div>' +
+      '<div class="row"><span>Revisão em ' + nf(m.proxRevKm) + ' km</span><b>' + falta + '</b></div>' +
+      (m.previsao ? '<div class="row"><span>Previsão (' + nf(m.kmDia) + ' km/dia)</span><b>' + dm(m.previsao) + '</b></div>' : '') +
+      '<div class="row"><span>Custo por km</span><b>' + (m.custoKm != null ? money(m.custoKm) : '—') + '</b></div>' +
+      '<div class="row"><span>Consumo</span><b>' + (m.consumo != null ? nf(m.consumo, 1) + ' km/l' : '—') + '</b></div>' +
+      '<div class="row"><span>No período</span><span>' + nf(m.km) + ' km · ' + nf(m.corridas) + ' corridas</span></div>' +
+      (S.view === 'motos' ? '<div class="actions" style="margin-top:12px"><button type="button" class="btn sm ghost" data-go="manutencao" data-moto="' + esc(m.id) + '" data-tipo-go="Revisão">' + icon('wrench') + 'Registrar revisão</button></div>' : '') +
+      '</div>';
+  }
+
+  /* ============================== EQUIPE ============================== */
+
+  ENTER.equipe = function () { if (S.driversStale || !S.drivers) loadDrivers(); else renderDrivers(); };
+
+  function loadDrivers() {
+    $('#list-eq').innerHTML = '<div class="loading"><span class="spin"></span>Carregando…</div>';
+    return run('getDrivers').then(function (r) { S.drivers = r; S.driversStale = false; renderDrivers(); })
+      .catch(function (e) { $('#list-eq').innerHTML = '<div class="empty">' + esc(errMsg(e)) + '</div>'; });
+  }
+  function pendencia(d) { return d.docsFaltando > 0 || d.cnhDias == null || d.cnhDias <= 30 || !(d.salario > 0); }
+  function renderDrivers() {
+    var q = normTxt($('#eq-busca').value);
+    var list = S.drivers.drivers.filter(function (d) {
+      if (q && normTxt(d.nome).indexOf(q) < 0) return false;
+      if (S.eqFilter === 'ativos') return d.status !== 'Inativo';
+      if (S.eqFilter === 'pend') return d.status !== 'Inativo' && pendencia(d);
+      return true;
+    });
+    $('#list-eq').innerHTML = list.length ? list.map(function (d) {
+      var cnh = d.cnhDias == null ? '<span style="color:var(--warn)">CNH não cadastrada</span>' : d.cnhDias < 0 ? '<span style="color:var(--crit)">CNH vencida</span>' :
+        d.cnhDias <= 30 ? '<span style="color:var(--warn)">CNH vence em ' + d.cnhDias + ' dias</span>' : 'CNH até ' + dmy(d.cnhValidade);
+      var docs = d.docsFaltando ? ' · <span style="color:var(--warn)">' + d.docsFaltando + ' doc. faltando</span>' : ' · docs ✓';
+      var right = d.status === 'Inativo' ? '<span class="pill muted">inativo</span>' : '<div class="r">' + nf(d.corridas) + '<small>corridas 30d</small></div>';
+      return '<div class="item click" data-ent="' + esc(d.id) + '"><span class="avatar">' + esc(initials(d.nome)) + '</span><div class="main"><div class="t">' + esc(d.nome) + '</div><div class="s">' + cnh + docs + '</div></div>' + right + '</div>';
+    }).join('') : '<div class="empty">Ninguém encontrado.</div>';
+  }
+  function normTxt(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim(); }
+
+  /* ============================== ENTREGADOR ============================== */
+
+  ENTER.entregador = function (o) {
+    var f = $('#f-ent');
+    f.reset();
+    field(f, 'id').value = '';
+    setStatus('Ativo');
+    $('#ent-docs').hidden = true;
+    if (!o.id) {
+      $('#top-title').textContent = 'Novo entregador';
+      $('#ent-head').innerHTML = '<div class="profile"><span class="avatar">' + icon('plus') + '</span><div><h2>Novo entregador</h2><div class="small muted">Preencha os dados e salve. Depois você envia os documentos.</div></div></div>';
+      return;
+    }
+    $('#ent-head').innerHTML = '<div class="loading"><span class="spin"></span>Carregando…</div>';
+    run('getDriver', o.id).then(function (r) { S.driver = r; fillDriver(r); }).catch(function (e) { toast(errMsg(e), true); back(); });
+  };
+
+  function setStatus(v) {
+    $$('#e-status button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.v === v); });
+    $('#e-desl-f').hidden = v !== 'Inativo';
+  }
+
+  function fillDriver(r) {
+    var f = $('#f-ent'), d = r.data;
+    Object.keys(d).forEach(function (k) {
+      var i = field(f, k);
+      if (!i || k === 'status') return;
+      i.value = k === 'salario' && d[k] !== '' ? nf(d[k], 2) : d[k];
+    });
+    setStatus(d.status === 'Inativo' ? 'Inativo' : 'Ativo');
+    $('#top-title').textContent = firstNames(d.nome);
+    var tel = String(d.telefone || '').replace(/\D/g, '');
+    var p = r.perf || {};
+    $('#ent-head').innerHTML = '<div class="profile"><span class="avatar">' + esc(initials(d.nome)) + '</span><div style="min-width:0"><h2>' + esc(d.nome) + '</h2>' +
+      '<div class="small muted">' + esc(d.id) + (d.status === 'Inativo' ? ' · <span class="pill muted">inativo</span>' : ' · <span class="pill ok">ativo</span>') + '</div></div></div>' +
+      (tel ? '<div class="actions" style="margin-top:12px"><a class="btn sm ghost" href="tel:' + tel + '">' + icon('phone') + 'Ligar</a><a class="btn sm ghost" target="_blank" rel="noopener" href="https://wa.me/' + (tel.length <= 11 ? '55' : '') + tel + '">WhatsApp</a></div>' : '') +
+      '<div class="stats-3"><div><b>' + nf(p.turnos || 0) + '</b>turnos 30d</div><div><b>' + nf(p.corridas || 0) + '</b>corridas 30d</div><div><b>' + (p.pctMeta == null ? '—' : p.pctMeta + '%') + '</b>na meta</div></div>';
+    renderDocs(r);
+  }
+
+  function renderDocs(r) {
+    var box = $('#ent-docs');
+    box.hidden = false;
+    var ultimo = function (t) { return r.docs.filter(function (x) { return x.tipo === t; })[0]; };
+    var tipos = r.docTipos.concat(['Outro']);
+    box.innerHTML = '<p class="form-title">Documentos</p>' + tipos.map(function (t) {
+      var d = t === 'Outro' ? null : ultimo(t);
+      var st = t === 'Outro' ? '<span class="muted">Qualquer outro documento</span>' : !d ? '<span style="color:var(--warn)">⚠ Faltando</span>' :
+        d.dias != null && d.dias < 0 ? '<span style="color:var(--crit)">✕ Vencido em ' + dmy(d.validade) + '</span>' :
+        '<span style="color:var(--good)">✓ Enviado ' + esc(d.data) + '</span>' + (d.validade ? ' · até ' + dmy(d.validade) : '');
+      return '<div class="doc"><span class="ico" style="width:38px;height:38px;border-radius:11px;background:var(--soft);color:var(--accent);display:flex;align-items:center;justify-content:center">' + icon(t === 'CNH' ? 'id' : 'doc') + '</span>' +
+        '<div class="main"><div class="t">' + esc(t) + '</div><div class="s">' + st + '</div></div>' +
+        (d ? '<a class="btn sm" target="_blank" rel="noopener" href="' + esc(d.url) + '">' + icon('eye') + '</a>' : '') +
+        '<label class="btn sm ghost">' + icon('upload') + (d ? 'Trocar' : 'Enviar') + '<input type="file" accept="image/*,application/pdf" data-doc="' + esc(t) + '"></label></div>';
+    }).join('') +
+      (r.docs.length ? '<details style="margin-top:10px"><summary class="small" style="cursor:pointer;color:var(--accent);font-weight:700">Histórico (' + r.docs.length + ')</summary><div class="list" style="margin-top:8px">' +
+        r.docs.map(function (d) { return '<a class="item" style="text-decoration:none;color:inherit" target="_blank" rel="noopener" href="' + esc(d.url) + '"><div class="main"><div class="t">' + esc(d.tipo) + '</div><div class="s">' + esc(d.data) + (d.por ? ' · ' + esc(d.por) : '') + '</div></div>' + icon('chev') + '</a>'; }).join('') +
+        '</div></details>' : '') +
+      (r.pasta ? '<p class="small" style="margin-top:12px"><a target="_blank" rel="noopener" href="' + esc(r.pasta) + '">Abrir pasta do entregador no Drive</a></p>' : '');
+  }
+
+  function uploadDoc(input) {
+    var file = input.files && input.files[0];
+    if (!file || !S.driver) return;
+    var tipo = input.dataset.doc;
+    if (tipo === 'Outro') { tipo = prompt('Nome do documento (ex.: Antecedentes criminais):', ''); if (!tipo) { input.value = ''; return; } }
+    var validade = '';
+    if (tipo === 'CNH') {
+      validade = $('#e-cnhval').value;
+      if (!validade) { var v = prompt('Validade da CNH (dd/mm/aaaa):', ''); if (v) { var m = v.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); if (m) validade = m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2); } }
+    }
+    var lbl = input.parentNode;
+    lbl.classList.add('busy');
+    toast('Enviando ' + tipo + '…');
+    readUpload(file).then(function (payload) {
+      return run('uploadDriverDoc', { entId: S.driver.data.id, tipo: tipo, validade: validade, file: payload });
+    }).then(function (res) {
+      toast(res.msg); S.driversStale = true; S.dashStale = true;
+      return run('getDriver', S.driver.data.id).then(function (r) { S.driver = r; fillDriver(r); });
+    }).catch(function (e) { toast(errMsg(e), true); }).then(function () { input.value = ''; });
+  }
+
+  function submitEnt(ev) {
+    ev.preventDefault();
+    var f = ev.target, p = {};
+    ['id', 'nome', 'cpf', 'rg', 'nascimento', 'telefone', 'endereco', 'emergencia', 'cnhNumero', 'cnhCategoria', 'cnhValidade', 'admissao', 'desligamento', 'salario', 'pix', 'camisa', 'obs']
+      .forEach(function (k) { var i = field(f, k); p[k] = i ? i.value.trim() : ''; });
+    p.status = $('#e-status [aria-pressed="true"]').dataset.v;
+    if (p.salario) p.salario = num(p.salario);
+    if (!p.nome) return toast('Informe o nome.', true);
+    var btn = $('button[type=submit]', f);
+    busy(btn, true);
+    run('saveDriver', p).then(function (res) {
+      toast(res.msg); S.driversStale = true; S.dashStale = true;
+      loadApp();
+      return run('getDriver', res.id).then(function (r) { S.driver = r; fillDriver(r); });
+    }).catch(function (e) { toast(errMsg(e), true); }).then(function () { busy(btn, false); });
+  }
+
+  /* ============================== PAINEL ============================== */
+
+  ENTER.inicio = function () { if (S.dashStale) loadDash(); };
+
+  function loadDash() {
+    if (!S.dash) $('#dash').innerHTML = '<div class="kpis"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
+    else $('#dash').style.opacity = '.55';
+    return run('getDashboard', S.period).then(function (d) {
+      S.dash = d; S.dashStale = false; $('#dash').style.opacity = ''; renderDash();
+    }).catch(function (e) {
+      $('#dash').style.opacity = '';
+      $('#dash').innerHTML = '<div class="card empty">Erro ao carregar o painel: ' + esc(errMsg(e)) + '</div>';
+    });
+  }
+
+  function delta(cur, prev, pol) {
+    if (cur == null || prev == null || prev === 0 || pol === 0) return '';
+    var p = Math.round(100 * (cur - prev) / Math.abs(prev));
+    if (!isFinite(p)) return '';
+    var good = pol > 0 ? p > 0 : p < 0;
+    var cls = p === 0 ? 'flat' : good ? 'up' : 'down';
+    return '<span class="delta ' + cls + '">' + (p > 0 ? '▲' : p < 0 ? '▼' : '') + ' ' + Math.abs(p) + '%</span>';
+  }
+
+  function renderDash() {
+    var d = S.dash, c = d.cur, p = d.prev, meta = d.config.meta;
+    $('#h-corr').textContent = nf(d.hoje.corridas);
+    $('#h-rec').textContent = moneyShort(d.hoje.receita);
+
+    // alertas
+    var al = d.alertas;
+    $('#home-alerts').innerHTML = al.length ? '<div class="sec-title"><h2>Atenção</h2>' + (al.length > 4 ? '<button type="button" class="link" id="al-more">Ver todos (' + al.length + ')</button>' : '') + '</div>' +
+      '<div class="alerts">' + al.map(function (a, i) {
+        var act = a.acao ? " data-acao='" + esc(JSON.stringify(a.acao)) + "'" : '';
+        return '<button type="button" class="alert ' + a.nivel + (a.acao ? ' has-action' : '') + '"' + act + (i >= 4 ? ' data-extra hidden' : '') + '><span class="ic">' + icon(a.icone) + '</span><span><b>' + esc(a.titulo) + '</b><span>' + esc(a.texto) + '</span></span>' + (a.acao ? '<span class="go">' + icon('chev') + '</span>' : '') + '</button>';
+      }).join('') + '</div>' : '';
+
+    // escala de hoje
+    $('#home-escala').innerHTML = d.escalaHoje.length ? '<div class="sec-title"><h2>Escala de hoje</h2><span class="small muted">' + d.escalaHoje.filter(function (e) { return e.emTurno; }).length + '/' + d.escalaHoje.length + ' já saíram</span></div><div class="chips">' +
+      d.escalaHoje.map(function (e) { return '<span class="person"><span class="avatar">' + esc(initials(e.nome)) + '</span>' + esc(firstNames(e.nome)) + '<span class="st ' + (e.emTurno ? 'on' : 'off') + '">' + (e.emTurno ? '● rodando' : 'aguardando') + '</span></span>'; }).join('') + '</div>' : '';
+
+    var K = [
+      { k: 'receita', l: 'Receita', i: 'money', f: money, pol: 1, s: c.receita ? (c.receitaCorrida ? money(c.receitaCorrida) + ' por corrida' : '') : 'lance em Receita do dia' },
+      { k: 'custos', l: 'Custos', i: 'wrench', f: money, pol: -1, s: 'comb. ' + moneyShort(c.combustivel) + ' · manut. ' + moneyShort(c.manutencao) + ' · sal. ' + moneyShort(c.salarios) },
+      { k: 'resultado', l: 'Resultado', i: 'chart', f: money, pol: 1, color: true, s: c.margem != null ? 'margem de ' + c.margem + '%' : 'receita − custos' },
+      { k: 'corridas', l: 'Corridas', i: 'list', f: function (v) { return nf(v); }, pol: 1, s: c.mediaCorridas != null ? nf(c.mediaCorridas, 1) + ' por turno · ' + c.turnos + ' turnos' : c.turnos + ' turnos' },
+      { k: 'custoCorrida', l: 'Custo por corrida', i: 'money', f: money, pol: -1, s: 'custos ÷ corridas' },
+      { k: 'consumo', l: 'Consumo médio', i: 'fuel', f: function (v) { return v == null ? '—' : nf(v, 1) + ' km/l'; }, pol: 1, s: c.precoLitro ? 'litro a ' + money(c.precoLitro) : 'lance abastecimentos' },
+      { k: 'km', l: 'KM rodado', i: 'moto', f: function (v) { return nf(v); }, pol: 0, s: c.custoKm != null ? money(c.custoKm) + ' por km' : '' },
+      { k: 'pctMeta', l: 'Turnos na meta', i: 'check', f: function (v) { return v == null ? '—' : v + '%'; }, pol: 1, s: 'meta de ' + meta + ' corridas' }
+    ];
+    var kpis = K.map(function (x) {
+      var v = c[x.k];
+      var cls = x.color && v != null ? (v >= 0 ? ' pos' : ' neg') : '';
+      return '<div class="kpi"><div class="l">' + icon(x.i) + x.l + '</div><div class="v' + cls + '">' + x.f(v) + '</div>' + delta(v, p[x.k], x.pol) + '<div class="s">' + esc(x.s || '') + '</div></div>';
+    }).join('');
+
+    var ins = d.insights.length ? '<ul class="insights">' + d.insights.map(function (x) {
+      return '<li class="' + x.tipo + '"><span class="b">' + (x.tipo === 'good' ? '▲' : x.tipo === 'bad' ? '!' : 'i') + '</span><span>' + esc(x.texto) + '</span></li>';
+    }).join('') + '</ul>' : '<div class="empty">Sem dados suficientes no período.</div>';
+
+    // para onde vai o dinheiro
+    var partes = [['Combustível', c.combustivel], ['Manutenção', c.manutencao], ['Salários', c.salarios]];
+    var tot = c.custos || 0;
+    var custos = tot > 0 ? '<div class="rank">' + partes.map(function (x) {
+      var pct = tot ? Math.round(100 * x[1] / tot) : 0;
+      return '<div><div style="display:flex;justify-content:space-between;font-size:14px"><b>' + x[0] + '</b><span><b>' + money(x[1]) + '</b> <span class="muted small">' + pct + '%</span></span></div><div class="mini-bar"><span style="width:' + pct + '%"></span></div></div>';
+    }).join('') + '</div>' : '<div class="empty">Sem custos lançados no período.</div>';
+
+    var rk = d.ranking.slice(0, 8);
+    var maxC = Math.max.apply(null, rk.map(function (r) { return r.corridas; }).concat([1]));
+    var ranking = rk.length ? '<div class="rank">' + rk.map(function (r, i) {
+      var extra = [r.turnos + ' turnos', r.pctMeta != null ? r.pctMeta + '% na meta' : null, r.faltas ? r.faltas + ' falta(s)' : null].filter(Boolean).join(' · ');
+      return '<div class="rank-row"><span class="pos' + (i < 3 ? ' top' : '') + '">' + (i + 1) + 'º</span><div style="min-width:0"><div class="nm">' + esc(firstNames(r.nome)) + '</div><div class="meta">' + esc(extra) + '</div>' +
+        '<div class="mini-bar"><span style="width:' + Math.round(100 * r.corridas / maxC) + '%"></span></div></div><div class="num">' + nf(r.corridas) + '<small>corridas</small></div></div>';
+    }).join('') + '</div>' : '<div class="empty">Sem turnos no período.</div>';
+
+    var pend = d.pendencias.length ? '<details class="card"><summary style="cursor:pointer;font-weight:800">Corrigir na planilha (' + d.totalPendencias + ' linhas com problema)</summary><div class="list" style="margin-top:12px">' +
+      d.pendencias.map(function (x) {
+        return '<a class="item" style="text-decoration:none;color:inherit" target="_blank" rel="noopener" href="' + sheetRow(x.row) + '"><div class="main"><div class="t">' + esc(x.dataFmt) + ' · ' + esc(x.moto) + ' · ' + esc(firstNames(x.entregador) || '—') + '</div><div class="s">' + esc(x.problemas.join(' · ')) + '</div></div>' + icon('chev') + '</a>';
+      }).join('') + '</div></details>' : '';
+
+    $('#dash').innerHTML =
+      '<div class="kpis">' + kpis + '</div>' +
+      '<div class="sec-title"><h2>O que os números dizem</h2><span class="small muted">' + esc(d.label) + ' vs. período anterior</span></div><div class="card">' + ins + '</div>' +
+      '<div class="cols"><div class="card"><div class="chart-head"><h3>Receita x Custos por dia</h3><div class="legend"><span><i style="background:var(--bar)"></i>Receita</span><span><i style="background:var(--bar-2)"></i>Custos</span></div></div><div class="chart-wrap" id="ch-fin"></div></div>' +
+      '<div class="card"><div class="chart-head"><h3 id="ch-op-t"></h3><div class="seg" id="ch-metric" style="flex:none"><button type="button" data-metric="corridas" aria-pressed="' + (S.metric === 'corridas') + '">Corridas</button><button type="button" data-metric="km" aria-pressed="' + (S.metric === 'km') + '">KM</button></div></div><div class="chart-wrap" id="ch-op"></div></div></div>' +
+      '<div class="sec-title"><h2>Frota</h2><button type="button" class="link" data-go="motos">Detalhes</button></div><div class="motos">' + d.motos.map(motoCard).join('') + '</div>' +
+      '<div class="cols" style="margin-top:14px"><div><div class="sec-title"><h2>Entregadores</h2><button type="button" class="link" data-go="equipe">Equipe</button></div><div class="card">' + ranking + '</div></div>' +
+      '<div><div class="sec-title"><h2>Para onde vai o dinheiro</h2></div><div class="card">' + custos + '</div></div></div>' + pend;
+
+    renderCharts();
+  }
+
+  function renderCharts() {
+    if (!S.dash || !$('#ch-fin')) return;
+    var serie = S.dash.serie;
+    bars($('#ch-fin'), serie, [{ k: 'receita', label: 'Receita', color: 'var(--bar)' }, { k: 'custo', label: 'Custos', color: 'var(--bar-2)' }], moneyShort);
+    $('#ch-op-t').textContent = S.metric === 'km' ? 'KM rodado por dia' : 'Corridas por dia';
+    bars($('#ch-op'), serie, [{ k: S.metric, label: S.metric === 'km' ? 'KM' : 'Corridas', color: 'var(--bar)' }], function (v) { return nf(v); });
+  }
+
+  function niceMax(v) {
+    if (v <= 0) return 4;
+    var p = Math.pow(10, Math.floor(Math.log10(v)));
+    var st = [1, 2, 2.5, 5, 10];
+    for (var i = 0; i < st.length; i++) if (st[i] * p >= v) return st[i] * p;
+    return 10 * p;
+  }
+
+  /** Barras por dia (uma ou mais séries lado a lado), com dica ao passar o dedo/mouse. */
+  function bars(wrap, serie, series, fmt) {
+    var W = Math.max(280, Math.round(wrap.clientWidth) || 600), H = 200, L = 48, R = 6, T = 16, B = 26;
+    var n = serie.length, band = (W - L - R) / n, ns = series.length;
+    var bw = Math.max(2, Math.min(22, band * (ns > 1 ? 0.8 : 0.62) / ns)), gap = ns > 1 ? 2 : 0;
+    var max = niceMax(Math.max.apply(null, serie.map(function (s) { return Math.max.apply(null, series.map(function (x) { return s[x.k] || 0; })); })));
+    var y = function (v) { return T + (H - T - B) * (1 - v / max); };
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+    [0, max / 2, max].forEach(function (t) {
+      svg += '<line class="gl" x1="' + L + '" x2="' + (W - R) + '" y1="' + y(t) + '" y2="' + y(t) + '"/><text class="axis" x="' + (L - 6) + '" y="' + (y(t) + 4) + '" text-anchor="end">' + fmt(t) + '</text>';
+    });
+    var every = Math.max(1, Math.ceil(n / Math.floor((W - L - R) / (n <= 10 ? 58 : 42))));
+    var total = ns * bw + (ns - 1) * gap;
+    serie.forEach(function (s, i) {
+      var cx = L + band * i + band / 2;
+      svg += '<rect class="hit" data-i="' + i + '" x="' + (L + band * i) + '" y="' + T + '" width="' + band + '" height="' + (H - T - B) + '"/>';
+      series.forEach(function (x, j) {
+        var v = s[x.k] || 0, top = y(v), bottom = y(0), h = bottom - top;
+        if (h <= 0) return;
+        var bx = cx - total / 2 + j * (bw + gap), r = Math.min(4, bw / 2, h);
+        svg += '<path data-b="' + i + '" style="fill:' + x.color + '" d="M' + bx + ' ' + bottom + 'V' + (top + r) + 'Q' + bx + ' ' + top + ' ' + (bx + r) + ' ' + top + 'H' + (bx + bw - r) + 'Q' + (bx + bw) + ' ' + top + ' ' + (bx + bw) + ' ' + (top + r) + 'V' + bottom + 'Z"/>';
+      });
+      if (i % every === 0 || i === n - 1) svg += '<text class="axis" x="' + cx + '" y="' + (H - 7) + '" text-anchor="middle">' + (n <= 7 ? weekday(s.key) + ' ' : '') + dm(s.key) + '</text>';
+    });
+    if (ns === 1) {
+      var vals = serie.map(function (s) { return s[series[0].k] || 0; }), mi = vals.indexOf(Math.max.apply(null, vals));
+      if (vals[mi] > 0) svg += '<text class="vl" x="' + (L + band * mi + band / 2) + '" y="' + (y(vals[mi]) - 5) + '" text-anchor="middle">' + fmt(vals[mi]) + '</text>';
+    }
+    svg += '</svg><div class="tip" hidden></div>';
+    wrap.innerHTML = svg;
+    var tip = $('.tip', wrap);
+    function show(i) {
+      var s = serie[i], rect = $('svg', wrap).getBoundingClientRect(), k = rect.width / W;
+      $$('.on', wrap).forEach(function (b) { b.classList.remove('on'); });
+      $$('[data-b="' + i + '"]', wrap).forEach(function (b) { b.classList.add('on'); });
+      var top = Math.min.apply(null, series.map(function (x) { return y(s[x.k] || 0); }));
+      tip.innerHTML = '<b>' + weekday(s.key) + ' ' + dmy(s.key) + '</b><br>' + series.map(function (x) { return x.label + ': ' + fmt(s[x.k] || 0); }).join('<br>') +
+        (ns > 1 ? '' : '<br>' + s.turnos + ' turno(s)');
+      tip.style.left = Math.min(Math.max((L + band * i + band / 2) * k, 70), rect.width - 70) + 'px';
+      tip.style.top = (top * k - 8) + 'px';
+      tip.hidden = false;
+    }
+    $$('.hit', wrap).forEach(function (el) {
+      var i = +el.dataset.i;
+      el.addEventListener('mouseenter', function () { show(i); });
+      el.addEventListener('click', function () { show(i); });
+    });
+    wrap.addEventListener('mouseleave', function () { tip.hidden = true; $$('.on', wrap).forEach(function (b) { b.classList.remove('on'); }); });
+  }
+
+  /* ============================== eventos ============================== */
+
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    var x = t.closest('.photo-prev .x');
+    if (x) { setPhoto(x.closest('.photo').dataset.photo, null); return; }
+    var im = t.closest('.photo-prev img');
+    if (im) { $('#dlg-foto img').src = im.src; $('#dlg-foto').showModal(); return; }
+    if (t.id === 'dlg-foto' || t.closest('#dlg-foto')) { $('#dlg-foto').close(); return; }
+    if (t.closest('[data-close]')) { t.closest('dialog').close(); return; }
+    if (t.id === 'dlg-ret') { $('#dlg-ret').close(); return; }
+
+    var b = t.closest('button, [data-ent], [data-go], [data-acao]');
+    if (!b) return;
+    var form = b.closest('form');
+    if (b.dataset.tab) { go(b.dataset.tab); return; }
+    if (b.dataset.acao) { var a = JSON.parse(b.dataset.acao); go(a.view, a); return; }
+    if (b.id === 'al-more') { $$('[data-extra]').forEach(function (e) { e.hidden = false; }); b.remove(); return; }
+    if (b.dataset.go) { go(b.dataset.go, { mode: b.dataset.mode, moto: b.dataset.moto, tipo: b.dataset.tipoGo }); return; }
+    if (b.dataset.ent) { go('entregador', { id: b.dataset.ent }); return; }
+    if (b.dataset.moto && form) { pickMoto(form, b.dataset.moto); return; }
+    if (b.dataset.turno && form) { field(form, 'turno').value = b.dataset.turno; return; }
+    if (b.dataset.ret) { openRet(+b.dataset.ret); return; }
+    if (b.dataset.tipo && form) { pickTipo(b.dataset.tipo); return; }
+    if (b.classList.contains('check-opt')) { b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true'); return; }
+    if (b.dataset.period) {
+      S.period = b.dataset.period;
+      $$('#period button').forEach(function (x) { x.setAttribute('aria-pressed', x === b); });
+      loadDash(); return;
+    }
+    if (b.dataset.metric) { S.metric = b.dataset.metric; $$('#ch-metric button').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); renderCharts(); return; }
+    if (b.dataset.mode && b.closest('#turno-seg')) { setTurnoMode(b.dataset.mode); return; }
+    if (b.dataset.f) { S.eqFilter = b.dataset.f; $$('#eq-filtro button').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); renderDrivers(); return; }
+    if (b.dataset.v && b.closest('#a-cheio')) { $$('#a-cheio button').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); return; }
+    if (b.dataset.v && b.closest('#e-status')) { setStatus(b.dataset.v); return; }
+    if (b.id === 'btn-back') { back(); return; }
+    if (b.id === 'eq-novo') { go('entregador', {}); return; }
+  });
+
+  document.addEventListener('change', function (ev) {
+    var t = ev.target;
+    if (t.matches('.photo input[type=file]')) {
+      var box = t.closest('.photo'), file = t.files && t.files[0];
+      if (!file) return;
+      var lbl = $('.lbl', box);
+      if (!lbl.dataset.orig) lbl.dataset.orig = lbl.textContent;
+      lbl.textContent = '…';
+      compressImage(file, 1600, 0.72).then(function (u) { setPhoto(box.dataset.photo, u); })
+        .catch(function (e) { setPhoto(box.dataset.photo, null); toast(errMsg(e), true); });
+      return;
+    }
+    if (t.matches('input[data-doc]')) uploadDoc(t);
+  });
+
+  document.addEventListener('input', function (ev) {
+    var t = ev.target, form = t.closest('form');
+    if (!form) { if (t.id === 'eq-busca') renderDrivers(); return; }
+    if (t.hasAttribute('data-autokm')) { t.dataset.auto = '0'; kmHint(form); }
+    if (form.id === 'f-ret') calcTurno(form, S.closing && S.closing.kmIni);
+    if (form.id === 'f-completo') calcTurno(form, num(field(form, 'kmIni').value));
+    if (form.id === 'f-abast') precoLitro();
+    if (form.id === 'f-manut') manutTotal();
+  });
+
+  $('#f-saida').addEventListener('submit', submitSaida);
+  $('#f-ret').addEventListener('submit', submitRet);
+  $('#f-completo').addEventListener('submit', submitCompleto);
+  $('#f-abast').addEventListener('submit', submitAbast);
+  $('#f-rec').addEventListener('submit', submitRec);
+  $('#f-manut').addEventListener('submit', submitManut);
+  $('#f-ent').addEventListener('submit', submitEnt);
+
+  var rz;
+  window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { if (S.view === 'inicio') renderCharts(); }, 150); });
+
+  paintIcons(document);
+  $$('[data-autokm]').forEach(function (i) { i.dataset.auto = '1'; });
+  loadApp().then(function () { if (S.app) loadDash(); });
+})();
+</script>

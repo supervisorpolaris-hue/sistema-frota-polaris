@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="theme-color" content="#fd4502">
+  <?!= include('Brand'); ?>
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <div class="splash" id="splash" aria-hidden="true">
+    <div class="logo-mark"></div>
+    <div class="logo-word"></div>
+    <p class="tagline">CONFIANÇA QUE ENTREGA!</p>
+    <span class="spin"></span>
+  </div>
+
+  <!-- ======================= TOPO ======================= -->
+  <header class="appbar">
+    <div class="appbar-in">
+      <button class="icon-btn" id="btn-back" aria-label="Voltar" hidden><svg class="i" data-i="back"></svg></button>
+      <div class="logo-mark" id="top-mark" role="img" aria-label="Polaris Entregas"></div>
+      <div class="logo-word" id="top-word" aria-hidden="true"></div>
+      <h1 id="top-title" hidden></h1>
+      <div class="sp" id="top-sp"></div>
+      <a class="icon-btn" id="sheet-link" target="_blank" rel="noopener" href="#" title="Abrir planilha"><svg class="i" data-i="sheet"></svg></a>
+    </div>
+  </header>
+
+  <main>
+    <!-- ======================= INÍCIO ======================= -->
+    <section class="view" data-view="inicio" data-title="">
+      <div class="hero">
+        <p class="hello" id="h-hello">Olá!</p>
+        <p class="date" id="h-date"></p>
+        <div class="hero-stats">
+          <div class="hero-stat"><b id="h-rua">–</b><span>motos na rua</span></div>
+          <div class="hero-stat"><b id="h-corr">–</b><span>corridas hoje</span></div>
+          <div class="hero-stat"><b id="h-rec">–</b><span>receita hoje</span></div>
+        </div>
+      </div>
+
+      <div class="quick">
+        <button type="button" data-go="turnos" data-mode="saida"><span class="ic"><svg class="i" data-i="out"></svg></span>Saída</button>
+        <button type="button" data-go="turnos" data-mode="retorno"><span class="ic"><svg class="i" data-i="in"></svg></span>Retorno</button>
+        <button type="button" data-go="abastecer"><span class="ic"><svg class="i" data-i="fuel"></svg></span>Abastecer</button>
+        <button type="button" data-go="receita"><span class="ic"><svg class="i" data-i="money"></svg></span>Receita</button>
+      </div>
+
+      <div id="home-alerts"></div>
+      <div id="home-escala"></div>
+
+      <div class="period-bar">
+        <div class="seg" id="period" role="group" aria-label="Período">
+          <button type="button" data-period="hoje">Hoje</button>
+          <button type="button" data-period="7" aria-pressed="true">7 dias</button>
+          <button type="button" data-period="30">30 dias</button>
+          <button type="button" data-period="mes">Mês</button>
+          <button type="button" data-period="mesant">Mês passado</button>
+        </div>
+      </div>
+      <div id="dash"><div class="kpis"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+    </section>
+
+    <!-- ======================= TURNOS ======================= -->
+    <section class="view" data-view="turnos" data-title="Turnos" hidden>
+      <div class="seg" id="turno-seg" style="margin-bottom:14px">
+        <button type="button" data-mode="saida" aria-pressed="true">Saída</button>
+        <button type="button" data-mode="retorno">Retorno <span id="ret-count"></span></button>
+        <button type="button" data-mode="completo">Turno completo</button>
+      </div>
+
+      <form id="f-saida" class="card" novalidate autocomplete="off">
+        <p class="form-title">Saída da moto</p>
+        <div class="fields two">
+          <div class="field full"><span class="lb">Moto <span class="req">*</span></span><div class="opts" data-motos></div><div data-moto-alert></div></div>
+          <div class="field"><label for="s-ent">Entregador <span class="req">*</span></label><input id="s-ent" name="entregador" list="dl-ent" placeholder="Digite ou escolha"></div>
+          <div class="field"><label for="s-turno">Turno <span class="req">*</span></label><input id="s-turno" name="turno" list="dl-turnos" placeholder="ex.: 11h-17h"><div class="opts" data-turnos></div></div>
+          <div class="field"><label for="s-kmIni">KM de saída <span class="req">*</span></label>
+            <div class="photo" data-photo="s-ini"><div class="input-row"><input id="s-kmIni" name="kmIni" type="number" inputmode="numeric" min="0" step="1" data-autokm>
+              <label class="photo-btn"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto</span></label></div>
+              <div class="photo-prev" hidden><img alt="Foto do painel"><button type="button" class="x" aria-label="Remover foto">✕</button></div></div>
+            <div class="hint" data-kmhint></div></div>
+          <div class="field"><label for="s-rec">Quem entregou a moto</label><input id="s-rec" name="recebido" list="dl-resp"></div>
+          <div class="field full"><span class="lb">Checklist rápido <span class="muted small">(toque no que estiver com problema)</span></span>
+            <div class="opts" id="s-check">
+              <button type="button" class="opt sm check-opt" data-check="Pneus" aria-pressed="true">Pneus</button>
+              <button type="button" class="opt sm check-opt" data-check="Freios" aria-pressed="true">Freios</button>
+              <button type="button" class="opt sm check-opt" data-check="Luzes" aria-pressed="true">Luzes</button>
+              <button type="button" class="opt sm check-opt" data-check="Óleo/corrente" aria-pressed="true">Óleo/corrente</button>
+            </div></div>
+          <div class="field"><label for="s-data">Data</label><input id="s-data" name="data" type="date"></div>
+        </div>
+        <div class="actions"><button type="submit" class="btn primary"><svg class="i" data-i="out"></svg>Registrar saída</button></div>
+      </form>
+
+      <div id="retorno-pane" hidden>
+        <div class="list" id="list-rua"></div>
+      </div>
+
+      <form id="f-completo" class="card" novalidate autocomplete="off" hidden>
+        <p class="form-title">Turno completo <span class="muted small">(para lançar um turno que já terminou)</span></p>
+        <div class="fields two">
+          <div class="field full"><span class="lb">Moto <span class="req">*</span></span><div class="opts" data-motos></div></div>
+          <div class="field"><label for="c-data">Data <span class="req">*</span></label><input id="c-data" name="data" type="date"></div>
+          <div class="field"><label for="c-ent">Entregador <span class="req">*</span></label><input id="c-ent" name="entregador" list="dl-ent"></div>
+          <div class="field"><label for="c-turno">Turno <span class="req">*</span></label><input id="c-turno" name="turno" list="dl-turnos"><div class="opts" data-turnos></div></div>
+          <div class="field"><label for="c-kmIni">KM de saída <span class="req">*</span></label>
+            <div class="photo" data-photo="c-ini"><div class="input-row"><input id="c-kmIni" name="kmIni" type="number" inputmode="numeric" min="0" step="1" data-autokm>
+              <label class="photo-btn"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto</span></label></div>
+              <div class="photo-prev" hidden><img alt=""><button type="button" class="x" aria-label="Remover foto">✕</button></div></div>
+            <div class="hint" data-kmhint></div></div>
+          <div class="field"><label for="c-kmFim">KM de retorno <span class="req">*</span></label>
+            <div class="photo" data-photo="c-fim"><div class="input-row"><input id="c-kmFim" name="kmFim" type="number" inputmode="numeric" min="0" step="1">
+              <label class="photo-btn"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto</span></label></div>
+              <div class="photo-prev" hidden><img alt=""><button type="button" class="x" aria-label="Remover foto">✕</button></div></div></div>
+          <div class="field"><label for="c-corr">Corridas realizadas <span class="req">*</span></label><input id="c-corr" name="corridas" type="number" inputmode="numeric" min="0" step="1"></div>
+          <div class="field"><label for="c-rec">Quem entregou a moto</label><input id="c-rec" name="recebido" list="dl-resp"></div>
+          <div class="field"><label for="c-dev">Quem recebeu de volta</label><input id="c-dev" name="devolvido" list="dl-resp"></div>
+          <div class="field"><label for="c-status">Status da moto</label><select id="c-status" name="status" data-status></select></div>
+          <div class="field full"><label for="c-oco">Ocorrência / avaria</label><input id="c-oco" name="ocorrencia" list="dl-oco" placeholder="TUDO OK"></div>
+          <div class="full calc" data-calc><div>KM rodado<b data-o="km">—</b></div><div>Meta do turno<b data-o="meta">—</b></div><div>Status meta<b data-o="bateu">—</b></div></div>
+        </div>
+        <div class="actions"><button type="submit" class="btn primary"><svg class="i" data-i="check"></svg>Salvar turno</button></div>
+      </form>
+
+      <div class="sec-title"><h2>Últimos turnos</h2></div>
+      <div class="list" id="list-turnos"></div>
+    </section>
+
+    <!-- ======================= ABASTECER ======================= -->
+    <section class="view" data-view="abastecer" data-title="Abastecimento" hidden>
+      <form id="f-abast" class="card" novalidate autocomplete="off">
+        <p class="form-title">Novo abastecimento</p>
+        <div class="fields two">
+          <div class="field full"><span class="lb">Moto <span class="req">*</span></span><div class="opts" data-motos></div></div>
+          <div class="field"><label for="a-valor">Valor pago (R$) <span class="req">*</span></label><input id="a-valor" name="valor" inputmode="decimal" placeholder="ex.: 50,00"></div>
+          <div class="field"><label for="a-litros">Litros</label><input id="a-litros" name="litros" inputmode="decimal" placeholder="ex.: 8,21"><div class="hint" id="a-preco"></div></div>
+          <div class="field"><label for="a-km">KM no painel</label>
+            <div class="photo" data-photo="a-painel"><div class="input-row"><input id="a-km" name="km" type="number" inputmode="numeric" min="0" step="1" data-autokm>
+              <label class="photo-btn"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto</span></label></div>
+              <div class="photo-prev" hidden><img alt=""><button type="button" class="x" aria-label="Remover foto">✕</button></div></div>
+            <div class="hint" data-kmhint></div></div>
+          <div class="field"><span class="lb">Encheu o tanque?</span>
+            <div class="seg" id="a-cheio"><button type="button" data-v="1" aria-pressed="true">Sim, completei</button><button type="button" data-v="0">Não</button></div>
+            <div class="hint">Tanque cheio permite calcular o consumo real (km/l).</div></div>
+          <div class="field"><label for="a-posto">Posto</label><input id="a-posto" name="posto" list="dl-postos"></div>
+          <div class="field"><label for="a-ent">Entregador</label><input id="a-ent" name="entregador" list="dl-ent"></div>
+          <div class="field"><label for="a-data">Data</label><input id="a-data" name="data" type="date"></div>
+          <div class="field"><span class="lb">Cupom fiscal</span>
+            <div class="photo" data-photo="a-cupom"><label class="photo-btn" style="width:100%"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto do cupom</span></label>
+              <div class="photo-prev" hidden><img alt=""><button type="button" class="x" aria-label="Remover foto">✕</button></div></div></div>
+          <div class="field full"><label for="a-obs">Observação</label><input id="a-obs" name="obs"></div>
+        </div>
+        <div class="actions"><button type="submit" class="btn primary"><svg class="i" data-i="fuel"></svg>Salvar abastecimento</button></div>
+      </form>
+      <div class="sec-title"><h2>Últimos abastecimentos</h2><span class="small muted" id="fuel-mes"></span></div>
+      <div class="list" id="list-fuel"></div>
+    </section>
+
+    <!-- ======================= EQUIPE ======================= -->
+    <section class="view" data-view="equipe" data-title="Entregadores" hidden>
+      <div class="input-row" style="margin-bottom:12px">
+        <div class="search" style="flex:1"><svg class="i" data-i="search"></svg><input id="eq-busca" placeholder="Buscar entregador" autocomplete="off"></div>
+        <button type="button" class="btn primary" style="flex:none" id="eq-novo"><svg class="i" data-i="plus"></svg>Novo</button>
+      </div>
+      <div class="seg" id="eq-filtro" style="margin-bottom:12px">
+        <button type="button" data-f="ativos" aria-pressed="true">Ativos</button>
+        <button type="button" data-f="pend">Com pendência</button>
+        <button type="button" data-f="todos">Todos</button>
+      </div>
+      <div class="list" id="list-eq"><div class="loading"><span class="spin"></span>Carregando…</div></div>
+    </section>
+
+    <!-- ======================= ENTREGADOR ======================= -->
+    <section class="view" data-view="entregador" data-title="Entregador" data-sub hidden>
+      <div class="card" id="ent-head"></div>
+      <div class="card" id="ent-docs" hidden></div>
+      <form id="f-ent" class="card" novalidate autocomplete="off">
+        <p class="form-title">Dados pessoais</p>
+        <input type="hidden" name="id">
+        <div class="fields two">
+          <div class="field full"><label for="e-nome">Nome completo <span class="req">*</span></label><input id="e-nome" name="nome" autocomplete="off"></div>
+          <div class="field"><label for="e-cpf">CPF</label><input id="e-cpf" name="cpf" inputmode="numeric" placeholder="000.000.000-00"></div>
+          <div class="field"><label for="e-rg">RG</label><input id="e-rg" name="rg"></div>
+          <div class="field"><label for="e-nasc">Data de nascimento</label><input id="e-nasc" name="nascimento" type="date"></div>
+          <div class="field"><label for="e-tel">Telefone / WhatsApp</label><input id="e-tel" name="telefone" inputmode="tel" placeholder="(00) 00000-0000"></div>
+          <div class="field full"><label for="e-end">Endereço</label><input id="e-end" name="endereco"></div>
+          <div class="field full"><label for="e-emerg">Contato de emergência</label><input id="e-emerg" name="emergencia" placeholder="Nome e telefone"></div>
+        </div>
+        <p class="form-title" style="margin-top:22px">Habilitação</p>
+        <div class="fields two">
+          <div class="field"><label for="e-cnh">Número da CNH</label><input id="e-cnh" name="cnhNumero" inputmode="numeric"></div>
+          <div class="field"><label for="e-cat">Categoria</label><select id="e-cat" name="cnhCategoria"><option></option><option>A</option><option>AB</option><option>AC</option><option>AD</option><option>AE</option></select></div>
+          <div class="field"><label for="e-cnhval">Validade da CNH</label><input id="e-cnhval" name="cnhValidade" type="date"></div>
+        </div>
+        <p class="form-title" style="margin-top:22px">Trabalho</p>
+        <div class="fields two">
+          <div class="field"><label for="e-adm">Data de admissão</label><input id="e-adm" name="admissao" type="date"></div>
+          <div class="field"><label for="e-sal">Salário mensal (R$)</label><input id="e-sal" name="salario" inputmode="decimal" placeholder="ex.: 1.800,00"></div>
+          <div class="field"><label for="e-pix">Chave PIX</label><input id="e-pix" name="pix"></div>
+          <div class="field"><label for="e-cam">Tamanho da camisa</label><select id="e-cam" name="camisa"><option></option><option>P</option><option>M</option><option>G</option><option>GG</option><option>XG</option></select></div>
+          <div class="field"><span class="lb">Situação</span><div class="seg" id="e-status"><button type="button" data-v="Ativo" aria-pressed="true">Ativo</button><button type="button" data-v="Inativo">Inativo</button></div></div>
+          <div class="field" id="e-desl-f" hidden><label for="e-desl">Data de desligamento</label><input id="e-desl" name="desligamento" type="date"></div>
+          <div class="field full"><label for="e-obs">Observações</label><textarea id="e-obs" name="obs"></textarea></div>
+        </div>
+        <div class="actions"><button type="submit" class="btn primary"><svg class="i" data-i="check"></svg>Salvar cadastro</button></div>
+      </form>
+    </section>
+
+    <!-- ======================= MAIS ======================= -->
+    <section class="view" data-view="mais" data-title="Mais" hidden>
+      <div class="menu">
+        <button type="button" data-go="receita"><span class="ico"><svg class="i" data-i="money"></svg></span><span>Receita do dia<small>Lançar quanto entrou</small></span><svg class="i chev" data-i="chev"></svg></button>
+        <button type="button" data-go="manutencao"><span class="ico"><svg class="i" data-i="wrench"></svg></span><span>Manutenção<small>Revisão, óleo, pneu, peças</small></span><svg class="i chev" data-i="chev"></svg></button>
+        <button type="button" data-go="motos"><span class="ico"><svg class="i" data-i="moto"></svg></span><span>Motos<small>KM, revisões e custos</small></span><svg class="i chev" data-i="chev"></svg></button>
+      </div>
+      <div class="menu" style="margin-top:14px">
+        <a id="m-sheet" target="_blank" rel="noopener" href="#"><span class="ico"><svg class="i" data-i="sheet"></svg></span><span>Abrir planilha<small>Ver e corrigir os dados</small></span><svg class="i chev" data-i="chev"></svg></a>
+        <a id="m-folder" target="_blank" rel="noopener" href="#"><span class="ico"><svg class="i" data-i="folder"></svg></span><span>Pasta de arquivos<small>Fotos e documentos no Drive</small></span><svg class="i chev" data-i="chev"></svg></a>
+      </div>
+      <p class="small muted" style="text-align:center;margin-top:18px" id="m-user"></p>
+    </section>
+
+    <!-- ======================= RECEITA ======================= -->
+    <section class="view" data-view="receita" data-title="Receita do dia" data-sub hidden>
+      <form id="f-rec" class="card" novalidate autocomplete="off">
+        <p class="form-title">Quanto entrou?</p>
+        <div class="fields two">
+          <div class="field"><label for="r-valor">Valor recebido (R$) <span class="req">*</span></label><input id="r-valor" name="valor" inputmode="decimal" placeholder="ex.: 850,00"></div>
+          <div class="field"><label for="r-data">Data</label><input id="r-data" name="data" type="date"></div>
+          <div class="field full"><label for="r-desc">Descrição</label><input id="r-desc" name="descricao" placeholder="ex.: repasse do dia, cliente X"></div>
+        </div>
+        <div class="actions"><button type="submit" class="btn primary"><svg class="i" data-i="money"></svg>Salvar receita</button></div>
+      </form>
+      <div class="sec-title"><h2>Últimas receitas</h2><span class="small muted" id="rec-mes"></span></div>
+      <div class="list" id="list-rec"></div>
+    </section>
+
+    <!-- ======================= MANUTENÇÃO ======================= -->
+    <section class="view" data-view="manutencao" data-title="Manutenção" data-sub hidden>
+      <form id="f-manut" class="card" novalidate autocomplete="off">
+        <p class="form-title">Registrar manutenção</p>
+        <div class="fields two">
+          <div class="field full"><span class="lb">Moto <span class="req">*</span></span><div class="opts" data-motos></div></div>
+          <div class="field full"><span class="lb">Tipo <span class="req">*</span></span><div class="opts" id="m-tipos"></div></div>
+          <div class="field"><label for="m-km">KM da moto</label><input id="m-km" name="km" type="number" inputmode="numeric" data-autokm><div class="hint" data-kmhint></div></div>
+          <div class="field"><label for="m-data">Data</label><input id="m-data" name="data" type="date"></div>
+          <div class="field full"><label for="m-desc">O que foi feito</label><input id="m-desc" name="descricao"></div>
+          <div class="field"><label for="m-pecas">Peças (R$)</label><input id="m-pecas" name="pecas" inputmode="decimal"></div>
+          <div class="field"><label for="m-mao">Mão de obra (R$)</label><input id="m-mao" name="maoObra" inputmode="decimal"><div class="hint" id="m-total"></div></div>
+          <div class="field"><label for="m-ofi">Oficina</label><input id="m-ofi" name="oficina"></div>
+          <div class="field"><span class="lb">Nota / recibo</span>
+            <div class="photo" data-photo="m-nota"><label class="photo-btn" style="width:100%"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto da nota</span></label>
+              <div class="photo-prev" hidden><img alt=""><button type="button" class="x" aria-label="Remover foto">✕</button></div></div></div>
+        </div>
+        <p class="hint" id="m-rev-hint" hidden>Ao salvar uma <b>Revisão</b>, a próxima revisão da moto é atualizada automaticamente na aba Frota.</p>
+        <div class="actions"><button type="submit" class="btn primary"><svg class="i" data-i="wrench"></svg>Salvar manutenção</button></div>
+      </form>
+      <div class="sec-title"><h2>Últimas manutenções</h2></div>
+      <div class="list" id="list-manut"></div>
+    </section>
+
+    <!-- ======================= MOTOS ======================= -->
+    <section class="view" data-view="motos" data-title="Motos" data-sub hidden>
+      <div class="motos" id="motos-list"><div class="skeleton"></div></div>
+    </section>
+
+    <div id="noaccess" class="noaccess" hidden>
+      <div class="logo-mark"></div>
+      <h2>Sem acesso</h2>
+      <p id="noaccess-msg" class="muted"></p>
+    </div>
+  </main>
+
+  <!-- ======================= MENU DE BAIXO ======================= -->
+  <nav class="tabbar" aria-label="Menu">
+    <div class="tabbar-in">
+      <button class="tab" data-tab="inicio" aria-current="true"><svg class="i" data-i="home"></svg>Início</button>
+      <button class="tab" data-tab="turnos"><svg class="i" data-i="moto"></svg>Turnos<span class="dot" id="dot-rua" hidden></span></button>
+      <button class="tab" data-tab="abastecer"><svg class="i" data-i="fuel"></svg>Abastecer</button>
+      <button class="tab" data-tab="equipe"><svg class="i" data-i="users"></svg>Equipe</button>
+      <button class="tab" data-tab="mais"><svg class="i" data-i="grid"></svg>Mais</button>
+    </div>
+  </nav>
+
+  <!-- ======================= RETORNO (folha de baixo) ======================= -->
+  <dialog id="dlg-ret">
+    <form id="f-ret" class="sheet" method="dialog" novalidate autocomplete="off">
+      <div class="grip"></div>
+      <p class="form-title">Retorno da moto</p>
+      <div class="summary" id="ret-resumo"></div>
+      <div class="fields two">
+        <div class="field"><label for="r-kmFim">KM de retorno <span class="req">*</span></label>
+          <div class="photo" data-photo="r-fim"><div class="input-row"><input id="r-kmFim" name="kmFim" type="number" inputmode="numeric" min="0" step="1">
+            <label class="photo-btn"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto</span></label></div>
+            <div class="photo-prev" hidden><img alt=""><button type="button" class="x" aria-label="Remover foto">✕</button></div></div>
+          <div class="hint" id="r-kmhint"></div></div>
+        <div class="field"><label for="r-corr">Corridas realizadas <span class="req">*</span></label><input id="r-corr" name="corridas" type="number" inputmode="numeric" min="0" step="1"></div>
+        <div class="field"><label for="r-dev">Quem recebeu de volta</label><input id="r-dev" name="devolvido" list="dl-resp"></div>
+        <div class="field"><label for="r-status">Status da moto</label><select id="r-status" name="status" data-status></select></div>
+        <div class="field full"><label for="r-oco">Ocorrência / avaria</label><input id="r-oco" name="ocorrencia" list="dl-oco" placeholder="TUDO OK"></div>
+        <div class="full calc" data-calc><div>KM rodado<b data-o="km">—</b></div><div>Meta do turno<b data-o="meta">—</b></div><div>Status meta<b data-o="bateu">—</b></div></div>
+      </div>
+      <div class="actions"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary"><svg class="i" data-i="in"></svg>Registrar retorno</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-foto"><img alt="Foto ampliada"></dialog>
+
+  <datalist id="dl-ent"></datalist>
+  <datalist id="dl-turnos"></datalist>
+  <datalist id="dl-resp"></datalist>
+  <datalist id="dl-oco"></datalist>
+  <datalist id="dl-postos"></datalist>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <?!= include('App'); ?>
+</body>
+</html>
