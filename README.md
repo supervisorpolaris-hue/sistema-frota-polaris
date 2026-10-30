@@ -55,6 +55,8 @@ ferramentas/
 
 Os detalhes estão em [`apps-script/LEIA-ME.md`](apps-script/LEIA-ME.md).
 
+Para trabalhar no projeto em outro computador (clonar, alterar, enviar e publicar), veja [`GUIA-OUTRA-MAQUINA.md`](GUIA-OUTRA-MAQUINA.md).
+
 ## Segurança
 
 O app roda com a conta de quem o abre. Por isso, **só quem tem acesso à planilha consegue usar o app**, e os documentos dos entregadores ficam protegidos pelo compartilhamento do Google Drive. O código não guarda senhas, chaves nem IDs de planilha: o ID é salvo nas propriedades do script quando `configurar` roda.
