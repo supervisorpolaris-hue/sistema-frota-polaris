@@ -286,12 +286,45 @@
       if (m && m.lastKm != null && (inp.value === '' || inp.dataset.auto === '1')) { inp.value = m.lastKm; inp.dataset.auto = '1'; }
     });
     kmHint(form);
+    sugerir(form, m);
     var al = $('[data-moto-alert]', form);
     if (al) {
       al.innerHTML = m && m.open ? '<div class="note" style="margin-top:8px">Esta moto já está na rua com <b>' + esc(m.open.entregador) + '</b> (' + esc(m.open.turno) +
         ', desde ' + esc(m.open.dataFmt) + '). <button type="button" class="btn sm ghost" data-ret="' + m.open.row + '">Registrar retorno</button></div>' : '';
     }
   }
+  /* Saída rápida: ao tocar na moto, sugere entregador e turno (sem apagar o que a pessoa já digitou). */
+  function setHint(form, k, txt) { var h = $('[data-hint="' + k + '"]', form); if (h) h.textContent = txt; }
+  function turnoPelaHora() {
+    var lista = (S.app && S.app.turnoHoras) || [], d = new Date(), agora = d.getHours() * 60 + d.getMinutes(), best = null;
+    lista.forEach(function (t) { var dif = Math.abs(t.min - agora); if (dif <= 120 && (!best || dif < best.dif)) best = { turno: t.turno, min: t.min, dif: dif }; });
+    if (!best) return null;
+    best.hora = ('0' + Math.floor(best.min / 60)).slice(-2) + ':' + ('0' + best.min % 60).slice(-2);
+    return best;
+  }
+  function sugerir(form, m) {
+    if (!m) return;
+    var fid = form.getAttribute('id'), ent = field(form, 'entregador'), tur = field(form, 'turno');
+    if (ent && (ent.value === '' || form.dataset.autoEnt === '1')) {
+      // Na saída, não sugere quem já está na rua com outra moto.
+      var naRua = function (n) { return fid !== 'f-abast' && S.app.openShifts.some(function (o) { return normTxt(o.entregador) === normTxt(n); }); };
+      var nome = '', motivo = '';
+      if (fid === 'f-abast' && m.open && m.open.entregador) { nome = m.open.entregador; motivo = 'está com a moto agora'; }
+      else if (m.vinculado && !naRua(m.vinculado)) { nome = m.vinculado; motivo = 'vinculado à moto'; }
+      else if (m.ultimoEntregador && !naRua(m.ultimoEntregador)) { nome = m.ultimoEntregador; motivo = 'último a usar esta moto'; }
+      ent.value = nome;
+      form.dataset.autoEnt = nome ? '1' : '';
+      setHint(form, 'ent', nome ? 'Sugerido: ' + motivo + '. Confira.' : '');
+    }
+    // Turno pelo horário só na saída (o "turno completo" é lançado depois, em outro horário).
+    if (tur && fid === 'f-saida' && (tur.value === '' || form.dataset.autoTurno === '1')) {
+      var t = turnoPelaHora();
+      tur.value = t ? t.turno : '';
+      form.dataset.autoTurno = t ? '1' : '';
+      setHint(form, 'turno', t ? 'Sugerido pelo horário (costuma sair às ' + t.hora + ').' : '');
+    }
+  }
+
   function kmHint(form) {
     var inp = $('[data-autokm]', form), h = $('[data-kmhint]', form);
     if (!inp || !h) return;
@@ -314,6 +347,8 @@
     $$('.check-opt', form).forEach(function (b) { b.setAttribute('aria-pressed', 'true'); });
     $$('[data-tipo]', form).forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
     delete form.dataset.tipo;
+    form.dataset.autoEnt = ''; form.dataset.autoTurno = '';
+    $$('[data-hint]', form).forEach(function (h) { h.textContent = ''; });
     ['recebido', 'devolvido'].forEach(function (n) { var i = field(form, n); if (i) i.value = store('resp'); });
     $$('select[data-status]', form).forEach(function (sel) {
       var a = S.app.statusOptions;
@@ -952,7 +987,7 @@
     if (b.dataset.go) { go(b.dataset.go, { mode: b.dataset.mode, moto: b.dataset.moto, tipo: b.dataset.tipoGo }); return; }
     if (b.dataset.ent) { go('entregador', { id: b.dataset.ent }); return; }
     if (b.dataset.moto && form) { pickMoto(form, b.dataset.moto); return; }
-    if (b.dataset.turno && form) { field(form, 'turno').value = b.dataset.turno; return; }
+    if (b.dataset.turno && form) { field(form, 'turno').value = b.dataset.turno; form.dataset.autoTurno = '0'; setHint(form, 'turno', ''); return; }
     if (b.dataset.ret) { openRet(+b.dataset.ret); return; }
     if (b.dataset.tipo && form) { pickTipo(b.dataset.tipo); return; }
     if (b.classList.contains('check-opt')) { b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true'); return; }
@@ -990,6 +1025,8 @@
     var t = ev.target, form = t.closest('form');
     if (!form) { if (t.id === 'eq-busca') renderDrivers(); return; }
     if (t.hasAttribute('data-autokm')) { t.dataset.auto = '0'; kmHint(form); }
+    if (t.name === 'entregador' && form.dataset.autoEnt) { form.dataset.autoEnt = '0'; setHint(form, 'ent', ''); }
+    if (t.name === 'turno' && form.dataset.autoTurno) { form.dataset.autoTurno = '0'; setHint(form, 'turno', ''); }
     if (form.id === 'f-ret') calcTurno(form, S.closing && S.closing.kmIni);
     if (form.id === 'f-completo') calcTurno(form, num(field(form, 'kmIni').value));
     if (form.id === 'f-abast') precoLitro();

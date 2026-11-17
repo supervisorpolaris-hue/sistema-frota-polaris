@@ -271,11 +271,22 @@ function app_(c) {
   var mes = c.today.slice(0, 7);
 
   var motoIds = c.frota.length ? c.frota.map(function (f) { return f.id; }) : distinct_(c.reg.rows, 'moto');
+  // Saída rápida: quem costuma pegar cada moto (vinculado no cadastro e último que usou), só entre entregadores ativos.
+  var ultimoEnt = {};
+  c.reg.rows.forEach(function (r) { if (cleanName_(r.entregador)) ultimoEnt[r.moto] = r.entregador; });
+  var sugere = function (nome) {
+    var n = cleanName_(nome);
+    if (!n) return '';
+    if (!drivers.length) return n;
+    var d = matchDriver_(n, drivers);
+    return d && ativo_(d) ? d.nome : '';
+  };
   var motos = motoIds.map(function (id) {
     var f = c.frota.filter(function (x) { return x.id === id; })[0] || {};
     return {
       id: id, modelo: f.modelo || '', lastKm: lastKm[id] == null ? null : lastKm[id],
-      open: open.filter(function (o) { return o.moto === id; })[0] || null
+      open: open.filter(function (o) { return o.moto === id; })[0] || null,
+      vinculado: sugere(f.entregador), ultimoEntregador: sugere(ultimoEnt[id])
     };
   });
 
@@ -294,6 +305,7 @@ function app_(c) {
     motos: motos,
     entregadores: drivers.filter(ativo_).map(function (d) { return d.nome; }),
     turnos: byFrequency_(c.reg.rows, 'turno'),
+    turnoHoras: turnoHoras_(c.reg.rows, c.today),
     responsaveis: byFrequency_(c.reg.rows.map(function (r) { return { x: r.recebido }; })
       .concat(c.reg.rows.map(function (r) { return { x: r.devolvido }; })), 'x'),
     ocorrencias: byFrequency_(c.reg.rows, 'ocorrencia').slice(0, 12),
@@ -314,6 +326,20 @@ function app_(c) {
     receitaMes: sum_(rec.filter(function (r) { return r.key.slice(0, 7) === mes; }), 'valor'),
     combustivelMes: sum_(fuel.filter(function (f) { return f.key.slice(0, 7) === mes; }), 'valor')
   };
+}
+
+/** Horário típico de saída de cada turno (mediana dos últimos 60 dias), para sugerir o turno pela hora. */
+function turnoHoras_(rows, today) {
+  var min = addDaysKey_(today, -60), por = {};
+  rows.forEach(function (r) {
+    var m = /^(\d{1,2}):(\d{2})/.exec(r.horaSaida || '');
+    if (!m || !r.turno || !r.key || r.key < min || norm_(r.turno) === 'folga') return;
+    (por[r.turno] = por[r.turno] || []).push(+m[1] * 60 + +m[2]);
+  });
+  return Object.keys(por).filter(function (k) { return por[k].length >= 2; }).map(function (k) {
+    var v = por[k].sort(function (a, b) { return a - b; });
+    return { turno: k, min: v[Math.floor(v.length / 2)], n: v.length };
+  }).sort(function (a, b) { return a.min - b.min; });
 }
 
 /** Dados das motos para a tela de cadastro (sem nova chamada ao servidor ao abrir a tela). */
@@ -1198,7 +1224,7 @@ function readRegistro_(ss, tz) {
       litros: toNumber_(get('litros')), valor: toNumber_(get('valor')), corridas: toNumber_(get('corridas')),
       meta: toNumber_(get('meta')), recebido: String(get('recebido') || '').trim(), devolvido: String(get('devolvido') || '').trim(),
       status: String(get('status') || '').trim(), ocorrencia: String(get('ocorrencia') || '').trim(),
-      horaSaida: String(get('horaSaida') || ''), horaRetorno: String(get('horaRetorno') || ''),
+      horaSaida: horaTxt_(get('horaSaida'), tz), horaRetorno: horaTxt_(get('horaRetorno'), tz),
       checklist: String(get('checklist') || ''),
       fotoIni: links.fotoIni ? links.fotoIni[i] : '', fotoFim: links.fotoFim ? links.fotoFim[i] : ''
     });
@@ -1724,6 +1750,11 @@ function fmtMemo_(d, tz, padrao) {
 function dateKey_(d, tz) { return fmtMemo_(d, tz, 'yyyy-MM-dd'); }
 function fmtDate_(d, tz) { return fmtMemo_(d, tz, 'dd/MM/yyyy'); }
 function hora_(tz) { return Utilities.formatDate(new Date(), tz, 'HH:mm'); }
+/** "08:05" gravado pelo app às vezes volta da planilha como horário (data de 1899): devolve sempre "HH:mm". */
+function horaTxt_(v, tz) {
+  if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? '' : Utilities.formatDate(v, tz, 'HH:mm');
+  return String(v == null ? '' : v);
+}
 function fmtKey_(k) { return k ? k.slice(8, 10) + '/' + k.slice(5, 7) : ''; }
 function pad3_(n) { return ('00' + n).slice(-3); }
 

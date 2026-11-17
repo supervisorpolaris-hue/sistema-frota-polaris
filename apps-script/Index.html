@@ -75,8 +75,8 @@
         <p class="form-title">Saída da moto</p>
         <div class="fields two">
           <div class="field full"><span class="lb">Moto <span class="req">*</span></span><div class="opts" data-motos></div><div data-moto-alert></div></div>
-          <div class="field"><label for="s-ent">Entregador <span class="req">*</span></label><input id="s-ent" name="entregador" list="dl-ent" placeholder="Digite ou escolha"></div>
-          <div class="field"><label for="s-turno">Turno <span class="req">*</span></label><input id="s-turno" name="turno" list="dl-turnos" placeholder="ex.: 11h-17h"><div class="opts" data-turnos></div></div>
+          <div class="field"><label for="s-ent">Entregador <span class="req">*</span></label><input id="s-ent" name="entregador" list="dl-ent" placeholder="Digite ou escolha"><p class="hint" data-hint="ent"></p></div>
+          <div class="field"><label for="s-turno">Turno <span class="req">*</span></label><input id="s-turno" name="turno" list="dl-turnos" placeholder="ex.: 11h-17h"><p class="hint" data-hint="turno"></p><div class="opts" data-turnos></div></div>
           <div class="field"><label for="s-kmIni">KM de saída <span class="req">*</span></label>
             <div class="photo" data-photo="s-ini"><div class="input-row"><input id="s-kmIni" name="kmIni" type="number" inputmode="numeric" min="0" step="1" data-autokm>
               <label class="photo-btn"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto</span></label></div>
@@ -104,7 +104,7 @@
         <div class="fields two">
           <div class="field full"><span class="lb">Moto <span class="req">*</span></span><div class="opts" data-motos></div></div>
           <div class="field"><label for="c-data">Data <span class="req">*</span></label><input id="c-data" name="data" type="date"></div>
-          <div class="field"><label for="c-ent">Entregador <span class="req">*</span></label><input id="c-ent" name="entregador" list="dl-ent"></div>
+          <div class="field"><label for="c-ent">Entregador <span class="req">*</span></label><input id="c-ent" name="entregador" list="dl-ent"><p class="hint" data-hint="ent"></p></div>
           <div class="field"><label for="c-turno">Turno <span class="req">*</span></label><input id="c-turno" name="turno" list="dl-turnos"><div class="opts" data-turnos></div></div>
           <div class="field"><label for="c-kmIni">KM de saída <span class="req">*</span></label>
             <div class="photo" data-photo="c-ini"><div class="input-row"><input id="c-kmIni" name="kmIni" type="number" inputmode="numeric" min="0" step="1" data-autokm>
@@ -146,7 +146,7 @@
             <div class="seg" id="a-cheio"><button type="button" data-v="1" aria-pressed="true">Sim, completei</button><button type="button" data-v="0">Não</button></div>
             <div class="hint">Tanque cheio permite calcular o consumo real (km/l).</div></div>
           <div class="field"><label for="a-posto">Posto</label><input id="a-posto" name="posto" list="dl-postos"></div>
-          <div class="field"><label for="a-ent">Entregador</label><input id="a-ent" name="entregador" list="dl-ent"></div>
+          <div class="field"><label for="a-ent">Entregador</label><input id="a-ent" name="entregador" list="dl-ent"><p class="hint" data-hint="ent"></p></div>
           <div class="field"><label for="a-data">Data</label><input id="a-data" name="data" type="date"></div>
           <div class="field"><span class="lb">Cupom fiscal</span>
             <div class="photo" data-photo="a-cupom"><label class="photo-btn" style="width:100%"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto do cupom</span></label>
