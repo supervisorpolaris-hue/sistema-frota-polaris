@@ -96,6 +96,7 @@ Não funciona pelo app, só pela planilha.
 ## Ajustes
 
 - **Meta de corridas e intervalo de revisão:** aba Configurações da planilha.
+- **Foto do KM obrigatória:** por padrão, a saída e o retorno só são gravados com a foto do painel (no "Turno completo", só a do KM final). Para deixar opcional, crie na aba Configurações a linha `Foto do KM obrigatória` com o valor `Não` (com `Sim`, volta a exigir).
 - **Salário de cada entregador:** tela Equipe. É o salário que entra no lucro.
 - **Limites de alerta** (300 km, 15 dias, CNH 30 dias): no começo do `Código.gs`.
 

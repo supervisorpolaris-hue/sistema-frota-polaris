@@ -359,6 +359,7 @@ function openShift(p) {
     var c = ctx_();
     var d = validateBase_(p);
     if (d.kmIni == null) throw new Error('Informe o KM de início.');
+    if (c.config.fotoObrigatoria && !p.fotoIni) throw new Error('Tire a foto do painel com o KM de saída.');
     var jaAberto = openShifts_(c.reg.rows, c.today).filter(function (o) { return o.moto === d.moto; })[0];
     if (jaAberto && !p.forcar) {
       throw new Error('A moto ' + d.moto + ' já está com turno aberto (' + jaAberto.entregador + ', ' +
@@ -384,6 +385,7 @@ function closeShift(rowNumber, p) {
     if (r.moto !== p.moto) throw new Error('A planilha mudou (a linha agora é de outra moto). Atualize a tela.');
     if (r.kmFim != null) throw new Error('Este turno já foi fechado. Atualize a tela.');
     var fim = validateFechamento_(p, r.kmIni);
+    if (c.config.fotoObrigatoria && !p.fotoFim) throw new Error('Tire a foto do painel com o KM de retorno.');
     var values = closingValues_(r.kmIni, fim, c.config);
     values.horaRetorno = hora_(c.tz);
     if (p.fotoFim) values.fotoFim = savePhoto_(c.ss, p.fotoFim, new Date(), r.moto + '_retorno_km' + fim.kmFim);
@@ -398,6 +400,8 @@ function saveFullShift(p) {
     var d = validateBase_(p);
     if (d.kmIni == null) throw new Error('Informe o KM de início.');
     var fim = validateFechamento_(p, d.kmIni);
+    // Turno completo é lançado depois: só a foto do KM final é exigida (a da saída pode não existir mais).
+    if (c.config.fotoObrigatoria && !p.fotoFim) throw new Error('Tire a foto do painel com o KM de retorno.');
     var values = closingValues_(d.kmIni, fim, c.config);
     values.data = d.data; values.moto = d.moto; values.entregador = d.entregador; values.turno = d.turno;
     values.kmIni = d.kmIni; values.recebido = d.recebido; values.por = userEmail_();
@@ -1233,11 +1237,17 @@ function readRegistro_(ss, tz) {
 }
 
 function readConfig_(ss) {
-  var config = { meta: 12, revKm: 3000, revMeses: 3 };
+  var config = { meta: 12, revKm: 3000, revMeses: 3, fotoObrigatoria: true };
   var sh = ss.getSheetByName(SHEET.CONF);
   if (!sh || sh.getLastRow() < 2) return config;
   sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
     var nome = norm_(r[0]), val = toNumber_(r[1]);
+    // Linha opcional "Foto do KM obrigatória" = Sim/Não (sem a linha: obrigatória)
+    if (nome.indexOf('foto') >= 0) {
+      var t = norm_(r[1]);
+      if (t) config.fotoObrigatoria = ['nao', 'n', 'false', '0', 'falso'].indexOf(t) < 0;
+      return;
+    }
     if (val == null) return;
     if (nome.indexOf('meta') >= 0) config.meta = val;
     else if (nome.indexOf('revis') >= 0 && nome.indexOf('km') >= 0) config.revKm = val;

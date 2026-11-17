@@ -224,8 +224,12 @@
   }
   function refresh() { S.dashStale = true; S.driversStale = true; return loadHome(); }
 
+  // Foto do KM obrigatória (aba Configurações: "Foto do KM obrigatória" = Sim/Não; sem a linha, é obrigatória).
+  function fotoObrig() { return !S.app || !S.app.config || S.app.config.fotoObrigatoria !== false; }
+
   function renderApp() {
     var a = S.app;
+    ['s-ini', 'r-fim', 'c-fim'].forEach(function (k) { var b = $('.photo[data-photo="' + k + '"]'); if (b) b.classList.toggle('obrig', fotoObrig()); });
     $('#sheet-link').href = a.sheetUrl; $('#m-sheet').href = a.sheetUrl;
     if (a.folderUrl) $('#m-folder').href = a.folderUrl; else $('#m-folder').hidden = true;
     $('#m-user').textContent = a.user ? 'Conectado como ' + a.user : '';
@@ -419,7 +423,8 @@
     $$('.check-opt', f).forEach(function (b) { check[b.dataset.check] = b.getAttribute('aria-pressed') === 'true'; });
     var p = { data: field(f, 'data').value || today(), moto: f.dataset.moto, entregador: field(f, 'entregador').value.trim(), turno: field(f, 'turno').value.trim(),
       kmIni: num(field(f, 'kmIni').value), recebido: field(f, 'recebido').value.trim(), checklist: check, fotoIni: photo('s-ini') };
-    var err = !p.moto ? 'Escolha a moto.' : !p.entregador ? 'Informe o entregador.' : !p.turno ? 'Informe o turno.' : p.kmIni == null ? 'Informe o KM de saída.' : null;
+    var err = !p.moto ? 'Escolha a moto.' : !p.entregador ? 'Informe o entregador.' : !p.turno ? 'Informe o turno.' : p.kmIni == null ? 'Informe o KM de saída.' :
+      fotoObrig() && !p.fotoIni ? 'Tire a foto do painel com o KM de saída.' : null;
     if (err) return toast(err, true);
     store('resp', p.recebido);
     send(f, 'openShift', p, p.fotoIni ? 'Enviando foto…' : null, function (res) {
@@ -464,7 +469,7 @@
     var p = { moto: o.moto, kmFim: num(field(f, 'kmFim').value), corridas: num(field(f, 'corridas').value), devolvido: field(f, 'devolvido').value.trim(),
       status: field(f, 'status').value, ocorrencia: field(f, 'ocorrencia').value.trim(), fotoFim: photo('r-fim') };
     var err = p.kmFim == null ? 'Informe o KM de retorno.' : p.kmFim < o.kmIni ? 'KM de retorno menor que o de saída (' + nf(o.kmIni) + ').' :
-      p.corridas == null ? 'Informe as corridas (0 se nenhuma).' : null;
+      p.corridas == null ? 'Informe as corridas (0 se nenhuma).' : fotoObrig() && !p.fotoFim ? 'Tire a foto do painel com o KM de retorno.' : null;
     if (err) return toast(err, true);
     if (p.kmFim - o.kmIni > 300 && !confirm('Foram ' + (p.kmFim - o.kmIni) + ' km neste turno. Está certo?')) return;
     store('resp', p.devolvido);
@@ -484,7 +489,7 @@
       ocorrencia: field(f, 'ocorrencia').value.trim(), fotoIni: photo('c-ini'), fotoFim: photo('c-fim') };
     var err = !p.moto ? 'Escolha a moto.' : !p.data ? 'Informe a data.' : !p.entregador ? 'Informe o entregador.' : !p.turno ? 'Informe o turno.' :
       p.kmIni == null ? 'Informe o KM de saída.' : p.kmFim == null ? 'Informe o KM de retorno.' : p.kmFim < p.kmIni ? 'KM de retorno menor que o de saída.' :
-      p.corridas == null ? 'Informe as corridas.' : null;
+      p.corridas == null ? 'Informe as corridas.' : fotoObrig() && !p.fotoFim ? 'Tire a foto do painel com o KM de retorno.' : null;
     if (err) return toast(err, true);
     send(f, 'saveFullShift', p, p.fotoIni || p.fotoFim ? 'Enviando fotos…' : null);
   }
