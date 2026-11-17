@@ -1175,7 +1175,14 @@ function ss_() {
   try {
     ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
   } catch (e) {
-    throw new Error('SEM_ACESSO: sua conta não tem acesso à planilha do sistema. Peça ao administrador para compartilhar com você.');
+    // Diz QUAL conta e QUAL planilha (final do código), e separa "falta permissão do Google" de "falta compartilhar".
+    var msg = String(e && e.message || e), quem = userEmail_(), fim = id ? ' (planilha …' + String(id).slice(-6) + ')' : '';
+    if (/googleapis\.com\/auth|suficientes|sufficient/i.test(msg)) {
+      throw new Error('SEM_ACESSO: o app não recebeu permissão para usar suas planilhas' + (quem ? ' na conta ' + quem : '') +
+        '. Remova o acesso do app em myaccount.google.com/connections, abra o link de novo e, na tela do Google, marque "Selecionar tudo" antes de continuar.');
+    }
+    throw new Error('SEM_ACESSO: ' + (quem ? 'a conta ' + quem : 'sua conta') + ' não tem acesso à planilha do sistema' + fim +
+      '. Peça ao administrador para compartilhar com você.');
   }
   if (!ss) throw new Error('O sistema ainda não foi configurado. Rode a função "configurar" no editor do Apps Script.');
   return ss;
