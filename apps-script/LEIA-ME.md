@@ -60,6 +60,16 @@ Para liberar uma pessoa do escritório:
 
 Quem não tiver acesso vê a mensagem "Sem acesso". Cada lançamento registra o e-mail de quem fez (coluna "Lançado por").
 
+**Dados guardados no aparelho:** para abrir rápido, o app guarda no navegador do aparelho os últimos dados do Início e do painel (sem CPF nem documentos). Eles só são usados no mesmo dia e são substituídos assim que os dados atuais chegam (um círculo girando no topo indica que está atualizando). Se a pessoa perder o acesso à planilha, esses dados são apagados na próxima vez que ela abrir o app. Em celular compartilhado, saia da conta Google ou limpe os dados do navegador.
+
+## Desempenho
+
+- A abertura busca telas e painel numa chamada só ao servidor (`getHome`).
+- Os links das fotos são lidos só das linhas que aparecem na tela, não da aba inteira.
+- Depois de salvar, o botão é liberado na hora e a tela se atualiza por trás.
+- As pastas de fotos do mês ficam guardadas nas propriedades do script (`FOTOS_<planilha>_<aaaa-mm>`). Se mudar a pasta de arquivos de lugar, apague essas propriedades em **Configurações do projeto → Propriedades do script**.
+- Para medir: no editor do Apps Script, menu **Execuções** mostra quanto tempo cada chamada levou (`getHome`, `openShift`, `saveFuel`…).
+
 ## Ajustes
 
 - **Meta de corridas e intervalo de revisão:** aba Configurações da planilha.

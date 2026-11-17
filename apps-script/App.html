@@ -4,7 +4,8 @@
 
   var S = {
     app: null, dash: null, period: '7', view: 'inicio', history: [], photos: {}, closing: null,
-    turnoMode: 'saida', drivers: null, eqFilter: 'ativos', driver: null, dashStale: true, driversStale: true, metric: 'corridas'
+    turnoMode: 'saida', drivers: null, eqFilter: 'ativos', driver: null, dashStale: true, driversStale: true, metric: 'corridas',
+    homeSeq: 0, homeBusy: false
   };
   var $ = function (s, el) { return (el || document).querySelector(s); };
   var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
@@ -167,13 +168,52 @@
 
   /* ============================== carregamento ============================== */
 
-  function loadApp() {
-    return run('getApp').then(function (a) { S.app = a; renderApp(); })
-      .catch(function (e) {
-        var m = errMsg(e);
-        if (/SEM_ACESSO|permiss|access/i.test(e && e.message || '')) { showNoAccess(m); return; }
-        toast('Erro ao carregar: ' + m, true);
-      }).then(hideSplash);
+  // Os últimos dados recebidos ficam guardados no aparelho: o app abre na hora com eles e
+  // atualiza por trás. Só vale no mesmo dia, para não sugerir a data de ontem nos formulários.
+  var CACHE = 'frota.home.v1';
+  function hojeLocal() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function readCache() {
+    try {
+      var h = JSON.parse(localStorage.getItem(CACHE) || 'null');
+      return h && h.app && h.app.today === hojeLocal() ? h : null;
+    } catch (e) { return null; }
+  }
+  function writeCache(h) { try { localStorage.setItem(CACHE, JSON.stringify(h)); } catch (e) { /* sem espaço: segue sem guardar */ } }
+  function clearCache() { try { localStorage.removeItem(CACHE); } catch (e) { /* nada */ } }
+  function setSync(on) { var s = $('#sync'); if (s) s.hidden = !on; }
+
+  /** Telas + painel numa chamada só ao servidor (antes eram duas, uma depois da outra). */
+  function loadHome() {
+    var seq = ++S.homeSeq;
+    S.homeBusy = true; setSync(true);
+    return run('getHome', S.period).then(function (h) {
+      if (seq !== S.homeSeq) return; // já pediram uma atualização mais nova
+      S.app = h.app; renderApp();
+      if (h.dash && h.dash.period === S.period) {
+        S.dash = h.dash; S.dashStale = false; $('#dash').style.opacity = ''; renderDash();
+        if (S.view === 'motos') renderMotosView();
+      } else S.dashStale = true;
+      writeCache({ app: h.app, dash: h.dash });
+    }).catch(function (e) {
+      if (seq !== S.homeSeq) return;
+      var m = errMsg(e);
+      if (/SEM_ACESSO|permiss|access/i.test(e && e.message || '')) { clearCache(); showNoAccess(m); return; }
+      toast('Erro ao carregar: ' + m, true);
+    }).then(function () {
+      if (seq === S.homeSeq) { S.homeBusy = false; setSync(false); }
+      hideSplash();
+    });
+  }
+
+  /** Abre na hora com os dados guardados (se houver) e busca os atuais. */
+  function start() {
+    var h = readCache();
+    if (h) {
+      S.app = h.app; renderApp();
+      if (h.dash && h.dash.period === S.period) { S.dash = h.dash; renderDash(); }
+      hideSplash();
+    }
+    return loadHome();
   }
   function hideSplash() { var s = $('#splash'); if (!s || s.classList.contains('out')) return; s.classList.add('out'); setTimeout(function () { s.remove(); }, 400); }
   function showNoAccess(msg) {
@@ -182,7 +222,7 @@
     $('#noaccess').hidden = false;
     $('#noaccess-msg').textContent = msg;
   }
-  function refresh() { S.dashStale = true; S.driversStale = true; return loadApp().then(function () { if (S.view === 'inicio') loadDash(); }); }
+  function refresh() { S.dashStale = true; S.driversStale = true; return loadHome(); }
 
   function renderApp() {
     var a = S.app;
@@ -195,11 +235,15 @@
     $$('[data-turnos]').forEach(function (el) {
       el.innerHTML = a.turnos.slice(0, 5).map(function (t) { return '<button type="button" class="opt sm" data-turno="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
     });
+    // renderApp roda de novo a cada atualização: mantém o que a pessoa já escolheu nos formulários.
     $$('select[data-status]').forEach(function (sel) {
+      var antes = sel.options.length ? sel.value : null;
       sel.innerHTML = a.statusOptions.map(function (o) { return '<option>' + esc(o) + '</option>'; }).join('');
-      sel.value = a.statusOptions.filter(function (o) { return /FINAL|DEVOL|DISPON|PARAD|RECOLH|GARAG/i.test(o); })[0] || a.statusOptions[0];
+      sel.value = antes && a.statusOptions.indexOf(antes) >= 0 ? antes :
+        a.statusOptions.filter(function (o) { return /FINAL|DEVOL|DISPON|PARAD|RECOLH|GARAG/i.test(o); })[0] || a.statusOptions[0];
     });
-    $('#m-tipos').innerHTML = a.manutTipos.map(function (t) { return '<button type="button" class="opt sm" data-tipo="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
+    var tipoSel = $('#f-manut').dataset.tipo || '';
+    $('#m-tipos').innerHTML = a.manutTipos.map(function (t) { return '<button type="button" class="opt sm" data-tipo="' + esc(t) + '" aria-pressed="' + (t === tipoSel) + '">' + esc(t) + '</button>'; }).join('');
     $$('form').forEach(function (f) { renderMotoChips(f); });
     $$('input[type=date]').forEach(function (i) { if (!i.value && i.name === 'data') i.value = a.today; });
     ['#s-rec', '#c-rec', '#c-dev', '#r-dev'].forEach(function (id) { var i = $(id); if (i && !i.value) i.value = store('resp'); });
@@ -343,6 +387,8 @@
     });
   }
 
+  // Depois de gravar, o botão é liberado na hora e a tela se atualiza por trás
+  // (antes o botão ficava travado até recarregar tudo).
   function send(form, fn, p, busyLabel, onErrRetry) {
     var btn = $('button[type=submit]', form);
     busy(btn, true, busyLabel);
@@ -350,10 +396,11 @@
       if (onErrRetry && onErrRetry(errMsg(e))) return run(fn, p);
       throw e;
     }).then(function (res) {
+      busy(btn, false);
       toast(res.msg);
       resetForm(form);
-      return refresh();
-    }).catch(function (e) { toast(errMsg(e), true); }).then(function () { busy(btn, false); });
+      refresh();
+    }).catch(function (e) { busy(btn, false); toast(errMsg(e), true); });
   }
 
   function openRet(row) {
@@ -384,8 +431,8 @@
     var btn = $('button[type=submit]', f);
     busy(btn, true, p.fotoFim ? 'Enviando foto…' : null);
     run('closeShift', o.row, p).then(function (res) {
-      $('#dlg-ret').close(); toast(res.msg); resetForm(f); return refresh();
-    }).catch(function (e) { toast(errMsg(e), true); }).then(function () { busy(btn, false); });
+      busy(btn, false); $('#dlg-ret').close(); toast(res.msg); resetForm(f); refresh();
+    }).catch(function (e) { busy(btn, false); toast(errMsg(e), true); });
   }
 
   function submitCompleto(ev) {
@@ -490,8 +537,9 @@
   /* ============================== MOTOS ============================== */
 
   ENTER.motos = function () {
-    if (S.dash && !S.dashStale) return renderMotosView();
+    if (S.dash && (!S.dashStale || S.homeBusy)) return renderMotosView();
     $('#motos-list').innerHTML = '<div class="skeleton"></div>';
+    if (S.homeBusy) return; // a atualização em andamento preenche a lista
     loadDash().then(renderMotosView);
   };
   function renderMotosView() { if (S.dash) $('#motos-list').innerHTML = S.dash.motos.map(motoCard).join('') || '<div class="empty">Nenhuma moto na aba Frota.</div>'; }
@@ -638,21 +686,25 @@
     busy(btn, true);
     run('saveDriver', p).then(function (res) {
       toast(res.msg); S.driversStale = true; S.dashStale = true;
-      loadApp();
+      loadHome();
       return run('getDriver', res.id).then(function (r) { S.driver = r; fillDriver(r); });
     }).catch(function (e) { toast(errMsg(e), true); }).then(function () { busy(btn, false); });
   }
 
   /* ============================== PAINEL ============================== */
 
-  ENTER.inicio = function () { if (S.dashStale) loadDash(); };
+  // Se uma atualização geral já está a caminho, ela mesma redesenha o painel.
+  ENTER.inicio = function () { if (S.dashStale && !S.homeBusy) loadDash(); else if (S.dash) renderCharts(); };
 
   function loadDash() {
+    var per = S.period;
     if (!S.dash) $('#dash').innerHTML = '<div class="kpis"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
     else $('#dash').style.opacity = '.55';
-    return run('getDashboard', S.period).then(function (d) {
+    return run('getDashboard', per).then(function (d) {
+      if (per !== S.period) return; // a pessoa já trocou de período
       S.dash = d; S.dashStale = false; $('#dash').style.opacity = ''; renderDash();
     }).catch(function (e) {
+      if (per !== S.period) return;
       $('#dash').style.opacity = '';
       $('#dash').innerHTML = '<div class="card empty">Erro ao carregar o painel: ' + esc(errMsg(e)) + '</div>';
     });
@@ -880,6 +932,6 @@
 
   paintIcons(document);
   $$('[data-autokm]').forEach(function (i) { i.dataset.auto = '1'; });
-  loadApp().then(function () { if (S.app) loadDash(); });
+  start();
 })();
 </script>

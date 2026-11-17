@@ -136,12 +136,30 @@ function testeSistema() {
 
 /* ============================== API: DADOS DO APP ============================== */
 
-function getApp() {
+/**
+ * Abertura do app: dados das telas + painel numa chamada só, lendo a planilha uma vez.
+ * (Antes eram duas chamadas seguidas, getApp e getDashboard, cada uma lendo tudo de novo.)
+ */
+function getHome(period) {
   var c = ctx_();
-  var fuel = fuelRows_(c);
-  var manut = rows_(table_(c.ss, 'MANUT')).map(manutEntry_(c));
-  var rec = rows_(table_(c.ss, 'REC')).map(recEntry_(c));
+  return { app: app_(c), dash: dash_(c, period) };
+}
+
+function getApp() { return app_(ctx_()); }
+
+/** Leituras compartilhadas entre telas e painel na mesma execução. */
+function fuel_(c) { return c._fuel || (c._fuel = fuelRows_(c)); }
+function manut_(c) { return c._manut || (c._manut = rows_(table_(c.ss, 'MANUT')).map(manutEntry_(c))); }
+function rec_(c) { return c._rec || (c._rec = rows_(table_(c.ss, 'REC')).map(recEntry_(c))); }
+function docs_(c) { return c._docs || (c._docs = rows_(table_(c.ss, 'DOCS'))); }
+
+function app_(c) {
+  var fuel = fuel_(c);
+  var manut = manut_(c);
+  var rec = rec_(c);
   var drivers = drivers_(c);
+  // Links das fotos: só das linhas que aparecem na tela (últimos turnos e turnos abertos).
+  regLinks_(c.reg, c.reg.rows.slice(-8).concat(openRows_(c.reg.rows, c.today)));
   var lastKm = lastKmByMoto_(c.reg.rows, fuel, manut);
   var open = openShifts_(c.reg.rows, c.today);
   var mes = c.today.slice(0, 7);
@@ -156,6 +174,10 @@ function getApp() {
   });
 
   var consumos = consumoPorAbastecimento_(fuel);
+  var abast = fuel.filter(function (f) { return f.origem === 'abast'; });
+  var ultAbast = abast.slice(-8), ultManut = manut.slice(-8);
+  tableLinks_(table_(c.ss, 'ABAST'), ultAbast, 'row');
+  tableLinks_(table_(c.ss, 'MANUT'), ultManut, 'row');
   return {
     user: userEmail_(),
     sheetUrl: c.ss.getUrl(),
@@ -170,18 +192,18 @@ function getApp() {
       .concat(c.reg.rows.map(function (r) { return { x: r.devolvido }; })), 'x'),
     ocorrencias: byFrequency_(c.reg.rows, 'ocorrencia').slice(0, 12),
     statusOptions: statusOptions_(c.reg),
-    postos: byFrequency_(fuel.filter(function (f) { return f.origem === 'abast'; }), 'posto').slice(0, 12),
+    postos: byFrequency_(abast, 'posto').slice(0, 12),
     manutTipos: MANUT_TIPOS,
     docTipos: DOC_TIPOS,
     openShifts: open,
     recentTurnos: c.reg.rows.slice(-8).reverse().map(publicRow_),
-    recentFuel: fuel.filter(function (f) { return f.origem === 'abast'; }).slice(-8).reverse().map(function (f) {
+    recentFuel: ultAbast.slice().reverse().map(function (f) {
       var o = pick_(f, ['row', 'dataFmt', 'hora', 'moto', 'km', 'litros', 'valor', 'preco', 'posto', 'cheio', 'entregador', 'fotoCupom', 'fotoPainel']);
       o.consumo = consumos[f.row] || null;
       return o;
     }),
     recentRec: rec.slice(-8).reverse(),
-    recentManut: manut.slice(-8).reverse(),
+    recentManut: ultManut.slice().reverse(),
     receitaMes: sum_(rec.filter(function (r) { return r.key.slice(0, 7) === mes; }), 'valor'),
     combustivelMes: sum_(fuel.filter(function (f) { return f.key.slice(0, 7) === mes; }), 'valor')
   };
@@ -343,7 +365,11 @@ function getDriver(id) {
   var c = ctx_();
   var d = drivers_(c).filter(function (x) { return x.id === id; })[0];
   if (!d) throw new Error('Entregador não encontrado.');
-  var docs = rows_(table_(c.ss, 'DOCS')).filter(function (x) { return x.entId === id; }).map(function (x) {
+  tableLinks_(table_(c.ss, 'ENT'), [d]);
+  var tDocs = table_(c.ss, 'DOCS');
+  var meus = rows_(tDocs).filter(function (x) { return x.entId === id; });
+  tableLinks_(tDocs, meus);
+  var docs = meus.map(function (x) {
     var vk = parseDate_(x.validade) ? dateKey_(parseDate_(x.validade), c.tz) : '';
     return { tipo: x.tipo, validade: vk, dias: vk ? daysBetween_(c.today, vk) : null, url: x.arquivo,
       nome: x.nomeArquivo, data: x.data ? fmtDate_(parseDate_(x.data) || new Date(x.data), c.tz) : '', por: x.por };
@@ -404,6 +430,7 @@ function uploadDriverDoc(p) {
     var t = table_(c.ss, 'ENT');
     var d = rows_(t).filter(function (x) { return x.id === p.entId; })[0];
     if (!d) throw new Error('Entregador não encontrado.');
+    tableLinks_(t, [d]);
     var tipo = String(p.tipo || '').trim() || 'Outro';
     var validade = p.validade ? parseDate_(p.validade) : null;
     var folder = driverFolder_(c, t, d);
@@ -421,15 +448,16 @@ function uploadDriverDoc(p) {
 
 /* ============================== API: PAINEL ============================== */
 
-function getDashboard(period) {
-  var c = ctx_();
+function getDashboard(period) { return dash_(ctx_(), period); }
+
+function dash_(c, period) {
   var P = periodo_(String(period || '7'), c.today);
   var turnos = c.reg.rows;
-  var fuel = fuelRows_(c);
-  var manut = rows_(table_(c.ss, 'MANUT')).map(manutEntry_(c));
-  var rec = rows_(table_(c.ss, 'REC')).map(recEntry_(c));
+  var fuel = fuel_(c);
+  var manut = manut_(c);
+  var rec = rec_(c);
   var drivers = drivers_(c);
-  var docs = rows_(table_(c.ss, 'DOCS'));
+  var docs = docs_(c);
   var escala = readEscala_(c.ss, c.today);
   var meta = c.config.meta;
   var inR = function (k, a, b) { return k && k >= a && k <= b; };
@@ -691,19 +719,33 @@ function perfByDriver_(c, drivers, a, b, escala) {
   return out;
 }
 
+/** Salário, admissão e desligamento de cada entregador, convertidos uma vez só (o painel pergunta dia a dia). */
+function salariosBase_(drivers, tz) {
+  if (drivers._sal && drivers._salTz === tz) return drivers._sal;
+  var lista = [];
+  drivers.forEach(function (d) {
+    var sal = toNumber_(d.salario);
+    if (!(sal > 0)) return;
+    var adm = parseDate_(d.admissao), des = parseDate_(d.desligamento);
+    lista.push({ sal: sal, adm: adm ? dateKey_(adm, tz) : '', des: des ? dateKey_(des, tz) : '', inativo: !des && norm_(d.status) === 'inativo' });
+  });
+  drivers._sal = lista;
+  drivers._salTz = tz;
+  return lista;
+}
+
 function salarios_(drivers, a, b, tz) {
   var total = 0;
-  var ativos = drivers.filter(function (d) { return toNumber_(d.salario) > 0; });
+  var ativos = salariosBase_(drivers, tz);
   if (!ativos.length) return 0;
   for (var k = a; k <= b; k = addDaysKey_(k, 1)) {
     var y = +k.slice(0, 4), m = +k.slice(5, 7);
     var diasMes = new Date(Date.UTC(y, m, 0)).getUTCDate();
     ativos.forEach(function (d) {
-      var adm = parseDate_(d.admissao), des = parseDate_(d.desligamento);
-      if (adm && dateKey_(adm, tz) > k) return;
-      if (des && dateKey_(des, tz) < k) return;
-      if (!des && norm_(d.status) === 'inativo') return;
-      total += toNumber_(d.salario) / diasMes;
+      if (d.adm && d.adm > k) return;
+      if (d.des && d.des < k) return;
+      if (d.inativo) return;
+      total += d.sal / diasMes;
     });
   }
   return total;
@@ -994,30 +1036,32 @@ function ctx_() {
   var ss = ss_();
   var tz = ss.getSpreadsheetTimeZone();
   var config = readConfig_(ss);
-  return { ss: ss, tz: tz, today: dateKey_(new Date(), tz), config: config, frota: readFrota_(ss, config), reg: readRegistro_(ss) };
+  return { ss: ss, tz: tz, today: dateKey_(new Date(), tz), config: config, frota: readFrota_(ss, config, tz), reg: readRegistro_(ss, tz) };
 }
 
-function readRegistro_(ss) {
+/**
+ * Lê a aba REGISTRO DIÁRIO numa leitura só (cabeçalho + dados).
+ * Os links das fotos NÃO são lidos aqui: ler links da aba inteira é a operação mais lenta da planilha.
+ * Quem precisa mostrar foto chama regLinks_ só para as linhas que vão aparecer na tela.
+ */
+function readRegistro_(ss, tz) {
   var sheet = ss.getSheetByName(SHEET.REG);
   if (!sheet) throw new Error('Aba "' + SHEET.REG + '" não encontrada na planilha.');
-  var tz = ss.getSpreadsheetTimeZone();
+  tz = tz || ss.getSpreadsheetTimeZone();
   var lastCol = sheet.getLastColumn();
   var lastRow = sheet.getLastRow();
-  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var all = sheet.getRange(1, 1, Math.max(lastRow, 1), lastCol).getValues();
+  var header = all[0];
   var idx = headerIndex_(header, COL);
   if (idx.data == null) idx.data = 0; // cabeçalho da data é "."
   ['moto', 'kmIni', 'kmFim'].forEach(function (k) {
     if (idx[k] == null) throw new Error('Coluna "' + COL[k] + '" não encontrada na aba ' + SHEET.REG + '.');
   });
-  var values = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, lastCol).getValues() : [];
+  var values = all.slice(1);
   var links = {};
   REG_LINKS.forEach(function (k) {
     if (idx[k] == null || lastRow < 2) return;
-    links[k] = sheet.getRange(2, idx[k] + 1, lastRow - 1, 1).getRichTextValues().map(function (r, i) {
-      var url = r[0] && r[0].getLinkUrl();
-      var raw = String(values[i][idx[k]] || '');
-      return url || (/^https?:\/\//.test(raw) ? raw : '');
-    });
+    links[k] = values.map(function (v) { var raw = String(v[idx[k]] || ''); return /^https?:\/\//.test(raw) ? raw : ''; });
   });
   var rows = [], lastUsed = 1;
   values.forEach(function (v, i) {
@@ -1062,11 +1106,12 @@ var FROTA_COLS = {
   kmInicial: 'KM inicial', ultRevKm: 'Última revisão (KM)', ultRevData: 'Última revisão (data)', proxRevKm: 'Próxima revisão (KM)'
 };
 
-function readFrota_(ss, config) {
+function readFrota_(ss, config, tz) {
   var sh = ss.getSheetByName(SHEET.FROTA);
-  if (!sh || sh.getLastRow() < 2) return [];
-  var tz = ss.getSpreadsheetTimeZone();
-  var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var lastRow = sh ? sh.getLastRow() : 0;
+  if (lastRow < 2) return [];
+  tz = tz || ss.getSpreadsheetTimeZone();
+  var data = sh.getRange(1, 1, lastRow, sh.getLastColumn()).getValues();
   var idx = headerIndex_(data[0], FROTA_COLS);
   return data.slice(1).map(function (v, i) {
     var get = function (k) { return idx[k] == null ? '' : v[idx[k]]; };
@@ -1111,9 +1156,13 @@ function statusOptions_(reg) {
 }
 
 /** Turnos com KM início e sem KM fim (últimos 7 dias; os mais antigos vão para pendências). */
-function openShifts_(rows, today) {
+function openRows_(rows, today) {
   var min = addDaysKey_(today, -7);
-  return rows.filter(function (r) { return r.kmIni != null && r.kmFim == null && r.key && r.key >= min; }).map(publicRow_).reverse();
+  return rows.filter(function (r) { return r.kmIni != null && r.kmFim == null && r.key && r.key >= min; });
+}
+
+function openShifts_(rows, today) {
+  return openRows_(rows, today).map(publicRow_).reverse();
 }
 
 function publicRow_(r) {
@@ -1214,27 +1263,53 @@ function table_(ss, key) {
 var __cache = {};
 function ss_cache_(ss) { var id = ss.getId(); return __cache[id] = __cache[id] || {}; }
 
+/** Linhas da aba. Colunas de link vêm vazias (ou com a URL, se estiver escrita como texto): use tableLinks_ para as que forem aparecer. */
 function rows_(t) {
   var sh = t.sheet, n = sh.getLastRow() - 1;
   if (n < 1) return [];
   var vals = sh.getRange(2, 1, n, t.lastCol).getValues();
-  var links = {};
-  t.schema.forEach(function (c) {
-    if (c[2] !== 'link') return;
-    links[c[0]] = sh.getRange(2, t.idx[c[0]] + 1, n, 1).getRichTextValues().map(function (r) { return (r[0] && r[0].getLinkUrl()) || ''; });
-  });
   var out = [];
   vals.forEach(function (v, r) {
     if (!v.some(function (x) { return x !== '' && x != null; })) return;
     var o = { _row: r + 2 };
     t.schema.forEach(function (c) {
       var x = v[t.idx[c[0]]];
-      if (c[2] === 'link') x = links[c[0]][r] || (/^https?:/.test(String(x)) ? String(x) : '');
+      if (c[2] === 'link') x = /^https?:/.test(String(x)) ? String(x) : '';
       o[c[0]] = x;
     });
     out.push(o);
   });
   return out;
+}
+
+/**
+ * Preenche os links (células "📎 Abrir") só das linhas da lista, numa leitura só:
+ * o retângulo entre a primeira e a última linha pedida, nas colunas de link.
+ */
+function fillLinks_(sheet, idx, keys, list, rowKey) {
+  var cols = keys.filter(function (k) { return idx[k] != null; });
+  var alvo = list.filter(function (o) { return o && o[rowKey] > 1; });
+  if (!cols.length || !alvo.length) return list;
+  var nums = alvo.map(function (o) { return o[rowKey]; });
+  var ci = cols.map(function (k) { return idx[k]; });
+  var r0 = Math.min.apply(null, nums), r1 = Math.max.apply(null, nums);
+  var c0 = Math.min.apply(null, ci), c1 = Math.max.apply(null, ci);
+  var rt = sheet.getRange(r0, c0 + 1, r1 - r0 + 1, c1 - c0 + 1).getRichTextValues();
+  alvo.forEach(function (o) {
+    cols.forEach(function (k) {
+      var cell = rt[o[rowKey] - r0][idx[k] - c0];
+      var url = cell && cell.getLinkUrl();
+      if (url) o[k] = url;
+    });
+  });
+  return list;
+}
+
+function regLinks_(reg, list) { return fillLinks_(reg.sheet, reg.idx, REG_LINKS, list, 'row'); }
+
+function tableLinks_(t, list, rowKey) {
+  var keys = t.schema.filter(function (c) { return c[2] === 'link'; }).map(function (c) { return c[0]; });
+  return fillLinks_(t.sheet, t.idx, keys, list, rowKey || '_row');
 }
 
 function writeObj_(t, row, obj) {
@@ -1286,11 +1361,29 @@ function subFolder_(parent, name) {
   return it.hasNext() ? it.next() : parent.createFolder(name);
 }
 
+/**
+ * Pasta Fotos/aaaa-mm. O ID fica guardado nas propriedades do script (por planilha e mês):
+ * evita procurar pasta por nome no Drive a cada foto, que é lento.
+ */
+var __pastasFotos = {};
+function photoFolder_(ss, mes) {
+  if (__pastasFotos[mes]) return __pastasFotos[mes];
+  var props = PropertiesService.getScriptProperties();
+  var chave = 'FOTOS_' + ss.getId() + '_' + mes;
+  var id = props.getProperty(chave);
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return (__pastasFotos[mes] = f); } catch (e) { /* recria */ }
+  }
+  var folder = subFolder_(subFolder_(rootFolder_(ss), 'Fotos'), mes);
+  props.setProperty(chave, folder.getId());
+  return (__pastasFotos[mes] = folder);
+}
+
 /** Foto de painel/cupom/nota → pasta Fotos/aaaa-mm. */
 function savePhoto_(ss, foto, data, nomeBase) {
   var tz = ss.getSpreadsheetTimeZone();
   var dia = Utilities.formatDate(data, tz, 'yyyy-MM-dd');
-  var folder = subFolder_(subFolder_(rootFolder_(ss), 'Fotos'), dia.slice(0, 7));
+  var folder = photoFolder_(ss, dia.slice(0, 7));
   var nome = dia + '_' + Utilities.formatDate(new Date(), tz, 'HHmm') + '_' + nomeBase + '.' + extFromMime_(foto && foto.mime);
   return saveFile_(foto, folder, nome, ['image/jpeg', 'image/png', 'image/webp']);
 }
@@ -1367,8 +1460,16 @@ function parseDate_(v) {
   return null;
 }
 
-function dateKey_(d, tz) { return Utilities.formatDate(d, tz, 'yyyy-MM-dd'); }
-function fmtDate_(d, tz) { return Utilities.formatDate(d, tz, 'dd/MM/yyyy'); }
+// A planilha repete as mesmas datas em muitas linhas: guarda cada conversão já feita nesta execução.
+var __datas = {};
+function fmtMemo_(d, tz, padrao) {
+  var k = padrao + '|' + tz + '|' + d.getTime();
+  var v = __datas[k];
+  if (v === undefined) v = __datas[k] = Utilities.formatDate(d, tz, padrao);
+  return v;
+}
+function dateKey_(d, tz) { return fmtMemo_(d, tz, 'yyyy-MM-dd'); }
+function fmtDate_(d, tz) { return fmtMemo_(d, tz, 'dd/MM/yyyy'); }
 function hora_(tz) { return Utilities.formatDate(new Date(), tz, 'HH:mm'); }
 function fmtKey_(k) { return k ? k.slice(8, 10) + '/' + k.slice(5, 7) : ''; }
 function pad3_(n) { return ('00' + n).slice(-3); }
