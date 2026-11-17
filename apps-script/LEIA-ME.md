@@ -25,7 +25,7 @@ Ele grava na planilha **Controle_Frota_Polaris** e guarda fotos e documentos no 
 
 - **Lidas:** REGISTRO DIÁRIO, Frota, Configurações, ESCALA, CAMISAS.
 - **Criadas pelo app:** ABASTECIMENTOS, RECEITAS, MANUTENÇÕES, ENTREGADORES e DOCUMENTOS.
-  - Na primeira vez, a aba ENTREGADORES é preenchida sozinha com os nomes que já existem na planilha, incluindo o tamanho de camisa da aba CAMISAS.
+  - Na primeira vez, a aba ENTREGADORES é preenchida sozinha com os nomes que já existem na planilha, incluindo o tamanho de camisa da aba CAMISAS. Depois de usar **Zerar o sistema**, isso fica desligado.
 - **REGISTRO DIÁRIO:** ganha as colunas Hora saída, Hora retorno, Checklist, Foto KM Início, Foto KM Fim e Lançado por.
   - O combustível não é mais lançado no turno. Os lançamentos antigos continuam contando nos custos.
 - **Pasta no Drive:** "Frota Polaris — Arquivos" (ao lado da planilha), com as subpastas **Fotos** (uma por mês) e **Documentos dos entregadores** (uma por pessoa).
@@ -69,6 +69,25 @@ Quem não tiver acesso vê a mensagem "Sem acesso". Cada lançamento registra o 
 - Depois de salvar, o botão é liberado na hora e a tela se atualiza por trás.
 - As pastas de fotos do mês ficam guardadas nas propriedades do script (`FOTOS_<planilha>_<aaaa-mm>`). Se mudar a pasta de arquivos de lugar, apague essas propriedades em **Configurações do projeto → Propriedades do script**.
 - Para medir: no editor do Apps Script, menu **Execuções** mostra quanto tempo cada chamada levou (`getHome`, `openShift`, `saveFuel`…).
+
+## Zerar o sistema (começar do zero)
+
+Na planilha: menu **Frota Polaris → Zerar o sistema…** (o menu aparece ao abrir a planilha). Pede duas confirmações e:
+- cria antes uma **cópia de segurança** da planilha no Drive ("BACKUP … — data hora");
+- apaga os dados de REGISTRO DIÁRIO, Frota, CAMISAS, ABASTECIMENTOS, RECEITAS, MANUTENÇÕES, ENTREGADORES e DOCUMENTOS (ficam cabeçalhos, fórmulas e formatação);
+- deixa a aba ESCALA com o modelo do mês atual;
+- **não mexe** na aba Configurações nem em abas que o app não usa (e avisa quais são);
+- se você escolher, manda a pasta "Frota Polaris — Arquivos" para a lixeira do Drive (recuperável por 30 dias);
+- desliga a importação automática de entregadores: daí em diante o cadastro é só pela tela Equipe.
+
+Não funciona pelo app, só pela planilha.
+
+**Depois de zerar, nesta ordem:**
+1. **Aba Frota:** uma linha por moto. `Moto (ID)` (ex.: MOTO 01), `Modelo`, `Placa`, `Entregador vinculado`, `Data início de uso`, **`KM inicial` = KM atual do painel da moto**, `Última revisão (KM)` e `Última revisão (data)` se souber. `Próxima revisão (KM)` pode ficar vazio (o app calcula). O app não tem tela para cadastrar moto.
+2. **Aba Configurações:** confira a meta de corridas por turno e o intervalo de revisão (km e meses).
+3. **App → Equipe → Novo:** cadastre cada entregador com salário (entra no lucro) e validade da CNH; envie os documentos.
+4. **Aba ESCALA:** a partir da linha 4, um entregador por linha (coluna A = nome) e `TR` nos dias de trabalho (`F` = folga). Para outro mês, copie o bloco de 3 linhas e troque o nome do mês.
+5. Na primeira saída de cada moto, digite o KM (depois o app sugere sozinho).
 
 ## Ajustes
 

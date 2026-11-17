@@ -122,6 +122,112 @@ function compartilharPasta() {
   return atuais.concat(novos).filter(function (e) { return e !== owner; });
 }
 
+/* ============================== ZERAR (menu da planilha) ============================== */
+
+/** Menu "Frota Polaris" na planilha. */
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('Frota Polaris')
+    .addItem('Zerar o sistema…', 'zerarSistema')
+    .addToUi();
+}
+
+/** Abas com dados que o "Zerar" apaga (a aba Configurações fica: meta de corridas e intervalo de revisão). */
+var ZERAR_ABAS = ['REG', 'FROTA', 'CAMISAS', 'ABAST', 'REC', 'MANUT', 'ENT', 'DOCS'];
+var PROP_SEM_IMPORTACAO = 'SEM_IMPORTACAO';
+
+/**
+ * Apaga todos os dados para começar do zero, com cópia de segurança antes.
+ * Só roda pelo menu da planilha (Frota Polaris → Zerar o sistema…), com duas confirmações.
+ * Mantém: cabeçalhos, fórmulas, formatação, validações e a aba Configurações.
+ */
+function zerarSistema() {
+  var ui = SpreadsheetApp.getUi(); // fora da planilha (ex.: pelo app) isso falha e nada é apagado
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var r = ui.alert('Zerar o sistema',
+    'Isto APAGA todos os dados desta planilha: turnos, abastecimentos, receitas, manutenções, motos, entregadores, ' +
+    'documentos, camisas e escala.\n\nFicam: cabeçalhos, fórmulas e a aba Configurações (meta e revisão).\n\n' +
+    'Antes de apagar, uma cópia de segurança da planilha é criada no seu Drive.\n\nContinuar?', ui.ButtonSet.YES_NO);
+  if (r !== ui.Button.YES) return;
+  var lixeira = ui.alert('Fotos e documentos no Drive',
+    'Mandar também para a lixeira a pasta "' + ROOT_FOLDER_NAME + '" (fotos de KM, cupons, notas, CNH, RG/CPF…)?\n\n' +
+    'SIM: vai para a lixeira do Drive (dá para restaurar por 30 dias).\nNÃO: os arquivos ficam no Drive, mas o app deixa de mostrá-los.',
+    ui.ButtonSet.YES_NO_CANCEL);
+  if (lixeira !== ui.Button.YES && lixeira !== ui.Button.NO) return;
+
+  var res = withLock_(function () { return zerar_(ss, lixeira === ui.Button.YES); });
+  ui.alert('Sistema zerado',
+    'Cópia de segurança: "' + res.backup + '" (no seu Drive).\n\n' +
+    'Apagado: ' + res.limpas.join(', ') + '.\n' + (res.lixeira ? 'Pasta de fotos e documentos enviada para a lixeira.\n' : '') +
+    (res.outras.length ? 'Abas que NÃO foram mexidas: ' + res.outras.join(', ') + '.\n' : '') +
+    '\nPróximo passo: cadastre as motos na aba Frota (com o KM atual de cada uma em "KM inicial").', ui.ButtonSet.OK);
+}
+
+function zerar_(ss, mandarParaLixeira) {
+  var tz = ss.getSpreadsheetTimeZone();
+  var agora = new Date();
+  var backup = ss.copy('BACKUP ' + ss.getName() + ' — ' + Utilities.formatDate(agora, tz, 'dd-MM-yyyy HH') + 'h' + Utilities.formatDate(agora, tz, 'mm'));
+  var limpas = [];
+  ZERAR_ABAS.forEach(function (k) {
+    var sh = ss.getSheetByName(SHEET[k]);
+    if (sh && limparDados_(sh)) limpas.push(SHEET[k]);
+  });
+  var esc = ss.getSheetByName(SHEET.ESCALA);
+  if (esc) { modeloEscala_(esc, dateKey_(new Date(), tz)); limpas.push(SHEET.ESCALA); }
+
+  var props = PropertiesService.getScriptProperties();
+  var foiLixeira = false;
+  if (mandarParaLixeira) {
+    var id = props.getProperty(PROP_ROOT);
+    if (id) { try { DriveApp.getFolderById(id).setTrashed(true); foiLixeira = true; } catch (e) { /* já não existe */ } }
+    props.getKeys().forEach(function (k) { if (k === PROP_ROOT || k.indexOf('FOTOS_') === 0) props.deleteProperty(k); });
+  }
+  // Cadastro de entregadores passa a ser só manual (sem importar nomes da Frota/escala automaticamente).
+  props.setProperty(PROP_SEM_IMPORTACAO, '1');
+  props.setProperty(PROP_SS, ss.getId());
+  SpreadsheetApp.flush();
+  // Recria as pastas (se foram para a lixeira) e dá acesso aos editores da planilha.
+  var root = rootFolder_(ss);
+  subFolder_(root, 'Fotos');
+  subFolder_(root, 'Documentos dos entregadores');
+  compartilharPasta();
+
+  var conhecidas = Object.keys(SHEET).map(function (k) { return SHEET[k]; });
+  var outras = ss.getSheets().map(function (s) { return s.getName(); }).filter(function (n) { return conhecidas.indexOf(n) < 0; });
+  return { backup: backup.getName(), limpas: limpas, lixeira: foiLixeira, outras: outras };
+}
+
+/** Apaga os valores da linha 2 em diante. Cabeçalho, fórmulas, formatação e validações ficam. */
+function limparDados_(sh) {
+  var lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) return false;
+  var rg = sh.getRange(2, 1, lastRow - 1, lastCol);
+  var f = rg.getFormulas();
+  rg.clearContent();
+  if (f.some(function (row) { return row.some(function (x) { return x !== ''; }); })) rg.setFormulas(f);
+  return true;
+}
+
+/** Deixa a aba ESCALA com o modelo do mês atual, no formato que o app entende (falta só pôr os nomes e TR/F). */
+function modeloEscala_(sh, hojeKey) {
+  var y = +hojeKey.slice(0, 4), m = +hojeKey.slice(5, 7);
+  var nomesMes = Object.keys(MESES).filter(function (k) { return MESES[k] === m; })[0];
+  var nomeMes = nomesMes === 'marco' ? 'MARÇO' : nomesMes.toUpperCase();
+  var dias = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  var sem = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
+  var linhaDias = ['DIAS DO MÊS'], linhaSem = ['DIA DA SEMANA'];
+  for (var d = 1; d <= dias; d++) { linhaDias.push(d); linhaSem.push(sem[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]); }
+  var titulo = ['ESCALA MÊS DE ' + nomeMes + ' ' + y];
+  while (titulo.length < linhaDias.length) titulo.push('');
+  sh.clearContents();
+  var need = linhaDias.length;
+  if (sh.getMaxColumns() < need) sh.insertColumnsAfter(sh.getMaxColumns(), need - sh.getMaxColumns());
+  sh.getRange(1, 1, 3, need).setValues([titulo, linhaDias, linhaSem]);
+}
+
+function importacaoDesligada_() {
+  return PropertiesService.getScriptProperties().getProperty(PROP_SEM_IMPORTACAO) === '1';
+}
+
 /** Teste rápido no editor: mostra no registro o que o app enxerga. */
 function testeSistema() {
   var a = getApp();
@@ -871,7 +977,7 @@ function drivers_(c) {
   if (c._drivers) return c._drivers;
   var t = table_(c.ss, 'ENT');
   var rows = rows_(t);
-  if (!rows.length) {
+  if (!rows.length && !importacaoDesligada_()) {
     var nomes = nomesConhecidos_(c);
     if (nomes.length) {
       var matrix = nomes.map(function (n, i) {
