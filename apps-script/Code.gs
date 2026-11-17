@@ -159,7 +159,7 @@ function zerarSistema() {
     'Cópia de segurança: "' + res.backup + '" (no seu Drive).\n\n' +
     'Apagado: ' + res.limpas.join(', ') + '.\n' + (res.lixeira ? 'Pasta de fotos e documentos enviada para a lixeira.\n' : '') +
     (res.outras.length ? 'Abas que NÃO foram mexidas: ' + res.outras.join(', ') + '.\n' : '') +
-    '\nPróximo passo: cadastre as motos na aba Frota (com o KM atual de cada uma em "KM inicial").', ui.ButtonSet.OK);
+    '\nPróximo passo: no app, Mais → Motos → Nova moto (com o KM atual do painel de cada uma).', ui.ButtonSet.OK);
 }
 
 function zerar_(ss, mandarParaLixeira) {
@@ -266,7 +266,7 @@ function app_(c) {
   var drivers = drivers_(c);
   // Links das fotos: só das linhas que aparecem na tela (últimos turnos e turnos abertos).
   regLinks_(c.reg, c.reg.rows.slice(-8).concat(openRows_(c.reg.rows, c.today)));
-  var lastKm = lastKmByMoto_(c.reg.rows, fuel, manut);
+  var lastKm = lastKmByMoto_(c.reg.rows, fuel, manut, c.frota);
   var open = openShifts_(c.reg.rows, c.today);
   var mes = c.today.slice(0, 7);
 
@@ -310,9 +310,20 @@ function app_(c) {
     }),
     recentRec: rec.slice(-8).reverse(),
     recentManut: ultManut.slice().reverse(),
+    frota: frotaPublica_(c, lastKm),
     receitaMes: sum_(rec.filter(function (r) { return r.key.slice(0, 7) === mes; }), 'valor'),
     combustivelMes: sum_(fuel.filter(function (f) { return f.key.slice(0, 7) === mes; }), 'valor')
   };
+}
+
+/** Dados das motos para a tela de cadastro (sem nova chamada ao servidor ao abrir a tela). */
+function frotaPublica_(c, lastKm) {
+  var n = lancamentosPorMoto_(c);
+  return c.frota.map(function (f) {
+    return { id: f.id, modelo: f.modelo, placa: f.placa, entregador: f.entregador, inicio: f.inicio, kmInicial: f.kmInicial,
+      ultRevKm: f.ultRevKm, ultRevData: f.ultRevData, proxRevKm: f.proxRevKm, proxRevData: f.proxRevData,
+      kmAtual: lastKm[f.id] == null ? null : lastKm[f.id], lancamentos: n[f.id] || 0 };
+  });
 }
 
 /* ============================== API: TURNOS ============================== */
@@ -613,7 +624,7 @@ function dash_(c, period) {
   }
 
   // Motos
-  var lastKm = lastKmByMoto_(turnos, fuel, manut);
+  var lastKm = lastKmByMoto_(turnos, fuel, manut, c.frota);
   var open = openShifts_(turnos, c.today);
   var k14 = addDaysKey_(c.today, -13);
   var motos = c.frota.map(function (f) {
@@ -961,9 +972,11 @@ function recEntry_(c) {
   };
 }
 
-function lastKmByMoto_(turnos, fuel, manut) {
+/** Maior KM conhecido de cada moto: lançamentos + KM do cadastro (aba Frota), que vale como primeira leitura. */
+function lastKmByMoto_(turnos, fuel, manut, frota) {
   var out = {};
   var put = function (m, v) { if (v == null || !m) return; if (out[m] == null || v > out[m]) out[m] = v; };
+  (frota || []).forEach(function (f) { put(f.id, f.kmInicial); put(f.id, f.ultRevKm); });
   turnos.forEach(function (r) { put(r.moto, r.kmIni); put(r.moto, r.kmFim); });
   (fuel || []).forEach(function (f) { put(f.moto, f.km); });
   (manut || []).forEach(function (m) { put(m.moto, m.km); });
@@ -1224,13 +1237,147 @@ function readFrota_(ss, config, tz) {
     var id = String(get('id') || '').trim();
     if (!id) return null;
     var ultRevKm = toNumber_(get('ultRevKm')), kmInicial = toNumber_(get('kmInicial')), prox = toNumber_(get('proxRevKm'));
+    var proxPlanilha = prox;
     if (prox == null) prox = (ultRevKm != null ? ultRevKm : (kmInicial || 0)) + config.revKm;
-    var base = parseDate_(get('ultRevData')) || parseDate_(get('inicio'));
+    var dRev = parseDate_(get('ultRevData')), dIni = parseDate_(get('inicio'));
+    var base = dRev || dIni;
     var proxData = null;
     if (base && config.revMeses) { proxData = new Date(base.getTime()); proxData.setMonth(proxData.getMonth() + config.revMeses); }
     return { row: i + 2, id: id, modelo: String(get('modelo') || '').trim(), entregador: String(get('entregador') || '').trim(),
-      proxRevKm: prox, proxRevData: proxData ? dateKey_(proxData, tz) : null };
+      proxRevKm: prox, proxRevData: proxData ? dateKey_(proxData, tz) : null,
+      placa: String(get('placa') || '').trim(), kmInicial: kmInicial, ultRevKm: ultRevKm, proxRevKmPlanilha: proxPlanilha,
+      inicio: dIni ? dateKey_(dIni, tz) : '', ultRevData: dRev ? dateKey_(dRev, tz) : '' };
   }).filter(Boolean);
+}
+
+/* ============================== API: MOTOS (aba Frota) ============================== */
+
+/** Aba Frota pronta para gravar: cria a aba e as colunas que faltarem (no fim), sem mexer nas existentes. */
+function frotaTable_(ss) {
+  var sh = ss.getSheetByName(SHEET.FROTA) || ss.insertSheet(SHEET.FROTA);
+  var lastCol = sh.getLastColumn();
+  var header = lastCol ? sh.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  var idx = headerIndex_(header, FROTA_COLS);
+  var faltam = Object.keys(FROTA_COLS).filter(function (k) { return idx[k] == null; });
+  if (faltam.length) {
+    var start = header.some(function (h) { return String(h).trim(); }) ? lastCol + 1 : 1;
+    var need = start + faltam.length - 1;
+    if (sh.getMaxColumns() < need) sh.insertColumnsAfter(sh.getMaxColumns(), need - sh.getMaxColumns());
+    faltam.forEach(function (k, j) {
+      var cell = sh.getRange(1, start + j);
+      if (start + j > 1) sh.getRange(1, start + j - 1).copyTo(cell, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      cell.setValue(FROTA_COLS[k]);
+      idx[k] = start + j - 1;
+    });
+    lastCol = Math.max(lastCol, need);
+  }
+  return { sheet: sh, idx: idx, lastCol: lastCol };
+}
+
+function chaveMoto_(s) { return norm_(s).replace(/[\s\-.]/g, ''); }
+
+/** Quantos lançamentos (turnos, abastecimentos, manutenções) cada moto tem. */
+function lancamentosPorMoto_(c) {
+  var n = {};
+  var conta = function (m) { if (m) n[m] = (n[m] || 0) + 1; };
+  c.reg.rows.forEach(function (r) { conta(r.moto); });
+  fuel_(c).forEach(function (f) { if (f.origem === 'abast') conta(f.moto); });
+  manut_(c).forEach(function (m) { conta(m.moto); });
+  return n;
+}
+
+function validaMoto_(p, novo, today, tz) {
+  p = p || {};
+  var id = String(p.id || '').trim().replace(/\s+/g, ' ');
+  if (!id) throw new Error('Informe a identificação da moto (ex.: MOTO 01).');
+  if (id.length > 30) throw new Error('Identificação muito longa (máximo 30 caracteres).');
+  if (norm_(id) === 'folga') throw new Error('"FOLGA" não pode ser nome de moto.');
+  var placa = String(p.placa || '').toUpperCase().replace(/[\s\-.]/g, '');
+  if (placa && !/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(placa)) throw new Error('Placa inválida. Use o formato ABC1D23 ou ABC1234.');
+  var km = toNumber_(p.kmInicial), rev = toNumber_(p.ultRevKm);
+  if (novo && km == null) throw new Error('Informe o KM atual da moto (o que aparece no painel).');
+  [[km, 'KM'], [rev, 'KM da última revisão']].forEach(function (x) {
+    if (x[0] != null && (x[0] < 0 || x[0] > 999999 || Math.floor(x[0]) !== x[0])) throw new Error(x[1] + ' inválido: use um número inteiro entre 0 e 999.999.');
+  });
+  var inicio = p.inicio ? parseDate_(p.inicio) : null, revData = p.ultRevData ? parseDate_(p.ultRevData) : null;
+  if (p.inicio && !inicio) throw new Error('Data de início de uso inválida.');
+  if (p.ultRevData && !revData) throw new Error('Data da última revisão inválida.');
+  var futura = function (d) { return d && dateKey_(d, tz) > today; };
+  if (futura(revData)) throw new Error('A data da última revisão não pode ser no futuro.');
+  if (futura(inicio)) throw new Error('A data de início de uso não pode ser no futuro.');
+  return { id: id, placa: placa, modelo: String(p.modelo || '').trim(), entregador: String(p.entregador || '').trim(),
+    kmInicial: km, ultRevKm: rev, inicio: inicio, ultRevData: revData };
+}
+
+/** Cadastra (sem p.original) ou atualiza (p.original = ID atual) uma moto na aba Frota. */
+function saveMoto(p) {
+  return withLock_(function () {
+    var c = ctx_();
+    var original = String((p && p.original) || '').trim();
+    var alvo = original ? c.frota.filter(function (f) { return f.id === original; })[0] : null;
+    if (original && !alvo) throw new Error('Moto não encontrada. Atualize a tela.');
+    var d = validaMoto_(p, !alvo, c.today, c.tz);
+    if (alvo && d.id !== alvo.id) throw new Error('A identificação da moto não pode ser mudada (os lançamentos usam esse nome).');
+    c.frota.forEach(function (f) {
+      if (f === alvo) return;
+      if (chaveMoto_(f.id) === chaveMoto_(d.id)) throw new Error('Já existe a moto ' + f.id + '.');
+      if (d.placa && f.placa && chaveMoto_(f.placa) === chaveMoto_(d.placa)) throw new Error('A placa ' + d.placa + ' já está cadastrada na ' + f.id + '.');
+    });
+    var lancado = lastKmByMoto_(c.reg.rows, fuel_(c), manut_(c))[d.id];
+    var kmAtual = Math.max(d.kmInicial == null ? 0 : d.kmInicial, lancado == null ? 0 : lancado);
+    if (d.ultRevKm != null && d.ultRevKm > kmAtual) {
+      throw new Error('KM da última revisão (' + fmtInt_(d.ultRevKm) + ') maior que o KM atual da moto (' + fmtInt_(kmAtual) + '). Confira os números.');
+    }
+    var t = frotaTable_(c.ss);
+    var o = { id: d.id, modelo: d.modelo, placa: d.placa, entregador: d.entregador, kmInicial: d.kmInicial == null ? '' : d.kmInicial,
+      ultRevKm: d.ultRevKm == null ? '' : d.ultRevKm, ultRevData: d.ultRevData || '', inicio: d.inicio || (alvo ? '' : parseDate_(c.today)) };
+    // Mudou a base da revisão: a próxima volta a ser calculada pelo intervalo da aba Configurações.
+    if (alvo && alvo.proxRevKmPlanilha != null && (alvo.ultRevKm !== d.ultRevKm || alvo.kmInicial !== d.kmInicial)) o.proxRevKm = '';
+    var row = alvo ? alvo.row : proxLinhaFrota_(t);
+    escreveFrota_(t, row, o);
+    return { ok: true, id: d.id, msg: (alvo ? 'Moto atualizada: ' : 'Moto cadastrada: ') + d.id + '.' };
+  });
+}
+
+/** Exclui a moto da aba Frota. Só se ela não tiver nenhum lançamento (para não deixar histórico órfão). */
+function deleteMoto(id) {
+  return withLock_(function () {
+    var c = ctx_();
+    var f = c.frota.filter(function (x) { return x.id === id; })[0];
+    if (!f) throw new Error('Moto não encontrada. Atualize a tela.');
+    var n = lancamentosPorMoto_(c)[id] || 0;
+    if (n) throw new Error('A ' + id + ' tem ' + n + ' lançamento(s) e não pode ser excluída. Se ela saiu da frota, apague a linha na aba Frota da planilha.');
+    frotaTable_(c.ss).sheet.deleteRow(f.row);
+    return { ok: true, msg: 'Moto excluída: ' + id + '.' };
+  });
+}
+
+function proxLinhaFrota_(t) {
+  var sh = t.sheet, last = sh.getLastRow(), row = 2;
+  if (last >= 2) {
+    var ids = sh.getRange(2, t.idx.id + 1, last - 1, 1).getValues();
+    for (var i = ids.length - 1; i >= 0; i--) if (String(ids[i][0]).trim()) { row = i + 3; break; }
+  }
+  if (row > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), 20);
+  return row;
+}
+
+/** Grava os campos na linha, sem apagar fórmulas que a aba já tenha. */
+function escreveFrota_(t, row, o) {
+  var sh = t.sheet;
+  var range = sh.getRange(row, 1, 1, t.lastCol);
+  var cur = range.getValues()[0], f = range.getFormulas()[0];
+  var out = cur.map(function (v, i) { return f[i] || v; });
+  var datas = [];
+  Object.keys(o).forEach(function (k) {
+    var i = t.idx[k];
+    if (i == null || f[i]) return;
+    out[i] = o[k];
+    if ((k === 'inicio' || k === 'ultRevData') && o[k]) datas.push(i);
+  });
+  range.setValues([out]);
+  datas.forEach(function (i) { sh.getRange(row, i + 1).setNumberFormat('dd/mm/yyyy'); });
+  SpreadsheetApp.flush();
 }
 
 function registrarRevisaoFrota_(c, moto, km, data) {

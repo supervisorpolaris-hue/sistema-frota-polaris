@@ -11,7 +11,9 @@ Ele grava na planilha **Controle_Frota_Polaris** e guarda fotos e documentos no 
 | **Turnos** | Saída (KM automático, foto do painel, checklist de pneus/freios/luzes/óleo), Retorno (KM final com foto, corridas, meta) e Turno completo. |
 | **Abastecer** | Valor, litros, KM com foto, tanque cheio, posto e foto do cupom. Calcula o **consumo real** (km/l) de um tanque cheio ao outro. |
 | **Equipe** | Cadastro dos entregadores (dados, CNH, salário, PIX, camisa, situação) e **documentos**: CNH, RG/CPF, comprovante de residência, contrato/termo da moto e outros. |
-| **Mais** | Receita do dia, Manutenção (revisão, óleo, pneu… — uma revisão atualiza a aba Frota sozinha), Motos, links da planilha e da pasta de arquivos. |
+| **Mais** | Receita do dia, Manutenção (revisão, óleo, pneu… — uma revisão atualiza a aba Frota sozinha), **Motos** (cadastrar, editar e excluir moto; KM, revisão e custos de cada uma), links da planilha e da pasta de arquivos. |
+
+**Cadastro de moto:** a identificação (ex.: MOTO 01) não muda depois de salva, porque os lançamentos usam esse nome. O KM informado no cadastro vale como primeira leitura da moto (o app já sugere esse KM na primeira saída e calcula a revisão). Placa no formato ABC1D23 ou ABC1234; o app recusa identificação ou placa repetida e KM da última revisão maior que o KM atual. Só dá para excluir moto que ainda não tem lançamentos; se ela saiu da frota, apague a linha na aba Frota.
 
 **O painel** mostra, para hoje, 7 ou 30 dias, este mês ou o mês passado, sempre comparando com o período anterior:
 - **Números principais:** receita, custos (combustível + manutenção + salários rateados por dia), **resultado (lucro)** e margem, corridas, custo por corrida, consumo médio, KM e % de turnos na meta.
@@ -83,7 +85,7 @@ Na planilha: menu **Frota Polaris → Zerar o sistema…** (o menu aparece ao ab
 Não funciona pelo app, só pela planilha.
 
 **Depois de zerar, nesta ordem:**
-1. **Aba Frota:** uma linha por moto. `Moto (ID)` (ex.: MOTO 01), `Modelo`, `Placa`, `Entregador vinculado`, `Data início de uso`, **`KM inicial` = KM atual do painel da moto**, `Última revisão (KM)` e `Última revisão (data)` se souber. `Próxima revisão (KM)` pode ficar vazio (o app calcula). O app não tem tela para cadastrar moto.
+1. **App → Mais → Motos → Nova moto:** identificação (ex.: MOTO 01), placa, modelo e **KM atual do painel**; última revisão (KM e data) se souber. O app mostra na hora quando será a próxima revisão. (Grava na aba Frota.)
 2. **Aba Configurações:** confira a meta de corridas por turno e o intervalo de revisão (km e meses).
 3. **App → Equipe → Novo:** cadastre cada entregador com salário (entra no lucro) e validade da CNH; envie os documentos.
 4. **Aba ESCALA:** a partir da linha 4, um entregador por linha (coluna A = nome) e `TR` nos dias de trabalho (`F` = folga). Para outro mês, copie o bloco de 3 linhas e troque o nome do mês.

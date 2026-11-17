@@ -141,7 +141,7 @@
 
   /* ============================== navegação ============================== */
 
-  var PARENT = { entregador: 'equipe', receita: 'mais', manutencao: 'mais', motos: 'mais' };
+  var PARENT = { entregador: 'equipe', receita: 'mais', manutencao: 'mais', motos: 'mais', moto: 'motos' };
   var ENTER = {};
 
   function go(view, opts, fromBack) {
@@ -170,7 +170,7 @@
 
   // Os últimos dados recebidos ficam guardados no aparelho: o app abre na hora com eles e
   // atualiza por trás. Só vale no mesmo dia, para não sugerir a data de ontem nos formulários.
-  var CACHE = 'frota.home.v1';
+  var CACHE = 'frota.home.v2';
   function hojeLocal() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
   function readCache() {
     try {
@@ -232,6 +232,7 @@
     var dl = function (id, list) { $(id).innerHTML = list.map(function (n) { return '<option value="' + esc(n) + '">'; }).join(''); };
     dl('#dl-ent', a.entregadores); dl('#dl-turnos', a.turnos); dl('#dl-resp', a.responsaveis);
     dl('#dl-oco', ['TUDO OK'].concat(a.ocorrencias.filter(function (o) { return o !== 'TUDO OK'; }))); dl('#dl-postos', a.postos);
+    dl('#dl-modelos', (a.frota || []).map(function (m) { return m.modelo; }).filter(function (x, i, l) { return x && l.indexOf(x) === i; }));
     $$('[data-turnos]').forEach(function (el) {
       el.innerHTML = a.turnos.slice(0, 5).map(function (t) { return '<button type="button" class="opt sm" data-turno="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
     });
@@ -267,6 +268,10 @@
   function renderMotoChips(form) {
     var box = $('[data-motos]', form);
     if (!box || !S.app) return;
+    if (!S.app.motos.length) {
+      box.innerHTML = '<div class="note">Nenhuma moto cadastrada ainda. <button type="button" class="btn sm ghost" data-go="moto">' + icon('plus') + 'Cadastrar moto</button></div>';
+      return;
+    }
     var sel = form.dataset.moto || '';
     box.innerHTML = S.app.motos.map(function (m) {
       var sub = m.open ? '● na rua' : m.lastKm != null ? nf(m.lastKm) + ' km' : 'sem KM';
@@ -542,7 +547,7 @@
     if (S.homeBusy) return; // a atualização em andamento preenche a lista
     loadDash().then(renderMotosView);
   };
-  function renderMotosView() { if (S.dash) $('#motos-list').innerHTML = S.dash.motos.map(motoCard).join('') || '<div class="empty">Nenhuma moto na aba Frota.</div>'; }
+  function renderMotosView() { if (S.dash) $('#motos-list').innerHTML = S.dash.motos.map(motoCard).join('') || '<div class="card empty">Nenhuma moto cadastrada. Toque em <b>Nova moto</b>.</div>'; }
 
   function motoCard(m) {
     var revKm = S.dash.config.revKm || 3000;
@@ -560,8 +565,78 @@
       '<div class="row"><span>Custo por km</span><b>' + (m.custoKm != null ? money(m.custoKm) : '—') + '</b></div>' +
       '<div class="row"><span>Consumo</span><b>' + (m.consumo != null ? nf(m.consumo, 1) + ' km/l' : '—') + '</b></div>' +
       '<div class="row"><span>No período</span><span>' + nf(m.km) + ' km · ' + nf(m.corridas) + ' corridas</span></div>' +
-      (S.view === 'motos' ? '<div class="actions" style="margin-top:12px"><button type="button" class="btn sm ghost" data-go="manutencao" data-moto="' + esc(m.id) + '" data-tipo-go="Revisão">' + icon('wrench') + 'Registrar revisão</button></div>' : '') +
+      (S.view === 'motos' ? '<div class="actions" style="margin-top:12px"><button type="button" class="btn sm ghost" data-go="manutencao" data-moto="' + esc(m.id) + '" data-tipo-go="Revisão">' + icon('wrench') + 'Registrar revisão</button>' +
+        '<button type="button" class="btn sm ghost" data-go="moto" data-moto="' + esc(m.id) + '">' + icon('doc') + 'Editar</button></div>' : '') +
       '</div>';
+  }
+
+  /* ============================== CADASTRO DE MOTO ============================== */
+
+  ENTER.moto = function (o) {
+    var f = $('#f-moto');
+    f.reset();
+    var id = o.moto || o.id || '';
+    var m = id && S.app ? (S.app.frota || []).filter(function (x) { return x.id === id; })[0] : null;
+    S.motoEdit = m || null;
+    field(f, 'original').value = m ? m.id : '';
+    field(f, 'motoId').value = id;
+    field(f, 'motoId').readOnly = !!m;
+    $('#mo-title').textContent = m ? 'Editar ' + m.id : 'Nova moto';
+    $('#top-title').textContent = m ? m.id : 'Nova moto';
+    $('#mo-id-hint').textContent = m ? 'A identificação não muda depois do cadastro (os lançamentos usam esse nome).' : 'Nome que aparece na Saída, no Abastecer e no painel.';
+    if (m) {
+      ['placa', 'modelo', 'entregador', 'inicio', 'ultRevData'].forEach(function (k) { field(f, k).value = m[k] || ''; });
+      field(f, 'kmInicial').value = m.kmInicial == null ? '' : m.kmInicial;
+      field(f, 'ultRevKm').value = m.ultRevKm == null ? '' : m.ultRevKm;
+    } else field(f, 'inicio').value = today();
+    $('#mo-km-lb').innerHTML = m ? 'KM no cadastro' : 'KM atual (do painel) <span class="req">*</span>';
+    $('#mo-km-hint').textContent = m ? (m.kmAtual != null ? 'KM atual conhecido: ' + nf(m.kmAtual) + ' km' : '') : 'Olhe o painel da moto e digite o número exato.';
+    $('#mo-excluir').hidden = !m;
+    proxMoto();
+  };
+
+  /** Mostra, enquanto a pessoa digita, quando será a próxima revisão. */
+  function proxMoto() {
+    var f = $('#f-moto'), cfg = S.app ? S.app.config : { revKm: 3000, revMeses: 3 };
+    var km = num(field(f, 'kmInicial').value), rev = num(field(f, 'ultRevKm').value);
+    var atual = Math.max(km || 0, (S.motoEdit && S.motoEdit.kmAtual) || 0);
+    var h = $('#mo-rev-hint');
+    h.className = 'hint'; h.textContent = '';
+    if (rev != null && atual && rev > atual) { h.className = 'hint warn'; h.textContent = 'Maior que o KM atual (' + nf(atual) + ').'; }
+    var base = rev != null ? rev : km, baseData = field(f, 'ultRevData').value || field(f, 'inicio').value, partes = [];
+    if (base != null) partes.push(nf(base + cfg.revKm) + ' km');
+    if (baseData && cfg.revMeses) { var d = kdate(baseData); d.setMonth(d.getMonth() + cfg.revMeses); partes.push(d.toLocaleDateString('pt-BR')); }
+    var box = $('#mo-prox');
+    box.hidden = !partes.length;
+    box.innerHTML = partes.length ? 'Próxima revisão: <b>' + partes.join('</b> ou <b>') + '</b>' + (partes.length > 1 ? ' (o que vier primeiro)' : '') +
+      '. Intervalo da aba Configurações: a cada ' + nf(cfg.revKm) + ' km' + (cfg.revMeses ? ' ou ' + cfg.revMeses + ' meses' : '') + '.' : '';
+  }
+
+  function submitMoto(ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    var p = { original: field(f, 'original').value, id: field(f, 'motoId').value.trim(), placa: field(f, 'placa').value.trim(), modelo: field(f, 'modelo').value.trim(),
+      entregador: field(f, 'entregador').value.trim(), kmInicial: num(field(f, 'kmInicial').value), inicio: field(f, 'inicio').value,
+      ultRevKm: num(field(f, 'ultRevKm').value), ultRevData: field(f, 'ultRevData').value };
+    var err = !p.id ? 'Informe a identificação da moto (ex.: MOTO 01).' : !p.original && p.kmInicial == null ? 'Informe o KM atual da moto.' : null;
+    if (err) return toast(err, true);
+    var btn = $('button[type=submit]', f);
+    busy(btn, true);
+    run('saveMoto', p).then(function (res) {
+      busy(btn, false); toast(res.msg); refresh(); back();
+    }).catch(function (e) { busy(btn, false); toast(errMsg(e), true); });
+  }
+
+  function excluirMoto() {
+    var m = S.motoEdit;
+    if (!m) return;
+    if (m.lancamentos) return toast('A ' + m.id + ' tem ' + m.lancamentos + ' lançamento(s) e não pode ser excluída.', true);
+    if (!confirm('Excluir a ' + m.id + '? Ela sai da aba Frota.')) return;
+    var btn = $('#mo-excluir');
+    busy(btn, true, 'Excluindo…');
+    run('deleteMoto', m.id).then(function (res) {
+      busy(btn, false); toast(res.msg); refresh(); back();
+    }).catch(function (e) { busy(btn, false); toast(errMsg(e), true); });
   }
 
   /* ============================== EQUIPE ============================== */
@@ -724,8 +799,9 @@
     $('#h-corr').textContent = nf(d.hoje.corridas);
     $('#h-rec').textContent = moneyShort(d.hoje.receita);
 
-    // alertas
+    // alertas (+ aviso de cadastro quando ainda não há motos)
     var al = d.alertas;
+    if (S.app && !S.app.motos.length) al = [{ nivel: 'warn', icone: 'moto', titulo: 'Nenhuma moto cadastrada', texto: 'Cadastre as motos (com o KM atual) para lançar turnos e abastecimentos.', acao: { view: 'moto' } }].concat(al);
     $('#home-alerts').innerHTML = al.length ? '<div class="sec-title"><h2>Atenção</h2>' + (al.length > 4 ? '<button type="button" class="link" id="al-more">Ver todos (' + al.length + ')</button>' : '') + '</div>' +
       '<div class="alerts">' + al.map(function (a, i) {
         var act = a.acao ? " data-acao='" + esc(JSON.stringify(a.acao)) + "'" : '';
@@ -892,6 +968,7 @@
     if (b.dataset.v && b.closest('#e-status')) { setStatus(b.dataset.v); return; }
     if (b.id === 'btn-back') { back(); return; }
     if (b.id === 'eq-novo') { go('entregador', {}); return; }
+    if (b.id === 'mo-excluir') { excluirMoto(); return; }
   });
 
   document.addEventListener('change', function (ev) {
@@ -917,6 +994,7 @@
     if (form.id === 'f-completo') calcTurno(form, num(field(form, 'kmIni').value));
     if (form.id === 'f-abast') precoLitro();
     if (form.id === 'f-manut') manutTotal();
+    if (form.id === 'f-moto') { if (t.name === 'placa') t.value = t.value.toUpperCase(); proxMoto(); }
   });
 
   $('#f-saida').addEventListener('submit', submitSaida);
@@ -926,6 +1004,7 @@
   $('#f-rec').addEventListener('submit', submitRec);
   $('#f-manut').addEventListener('submit', submitManut);
   $('#f-ent').addEventListener('submit', submitEnt);
+  $('#f-moto').addEventListener('submit', submitMoto);
 
   var rz;
   window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { if (S.view === 'inicio') renderCharts(); }, 150); });
