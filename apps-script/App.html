@@ -237,8 +237,16 @@
     dl('#dl-ent', a.entregadores); dl('#dl-turnos', a.turnos); dl('#dl-resp', a.responsaveis);
     dl('#dl-oco', ['TUDO OK'].concat(a.ocorrencias.filter(function (o) { return o !== 'TUDO OK'; }))); dl('#dl-postos', a.postos);
     dl('#dl-modelos', (a.frota || []).map(function (m) { return m.modelo; }).filter(function (x, i, l) { return x && l.indexOf(x) === i; }));
+    // Turnos fixos (aba Configurações) viram os únicos botões; entregador só da lista do cadastro.
+    var turnos = turnosFixos().length ? turnosFixos().map(function (t) { return t.nome; }) : a.turnos.slice(0, 5);
     $$('[data-turnos]').forEach(function (el) {
-      el.innerHTML = a.turnos.slice(0, 5).map(function (t) { return '<button type="button" class="opt sm" data-turno="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
+      el.innerHTML = turnos.map(function (t) { return '<button type="button" class="opt" data-turno="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
+      marcaTurno(el.closest('form'));
+    });
+    $$('select[data-ent]').forEach(function (sel) {
+      var antes = sel.value, vazio = sel.dataset.vazio || (a.entregadores.length ? 'Escolha o entregador' : 'Cadastre em Equipe primeiro');
+      sel.innerHTML = '<option value="">' + esc(vazio) + '</option>' + a.entregadores.map(function (n) { return '<option>' + esc(n) + '</option>'; }).join('');
+      if (antes && a.entregadores.indexOf(antes) >= 0) sel.value = antes;
     });
     // renderApp roda de novo a cada atualização: mantém o que a pessoa já escolheu nos formulários.
     $$('select[data-status]').forEach(function (sel) {
@@ -299,9 +307,22 @@
   }
   /* Saída rápida: ao tocar na moto, sugere entregador e turno (sem apagar o que a pessoa já digitou). */
   function setHint(form, k, txt) { var h = $('[data-hint="' + k + '"]', form); if (h) h.textContent = txt; }
+  function turnosFixos() { return (S.app && S.app.config && S.app.config.turnos) || []; }
+  function marcaTurno(form) {
+    if (!form) return;
+    var tu = field(form, 'turno'), v = tu ? tu.value : '';
+    $$('[data-turno]', form).forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.turno === v); });
+  }
+  /** Turno sugerido pela hora: o de início mais próximo, entre os que começam em até 2 h ou já estão em andamento. */
   function turnoPelaHora() {
-    var lista = (S.app && S.app.turnoHoras) || [], d = new Date(), agora = d.getHours() * 60 + d.getMinutes(), best = null;
-    lista.forEach(function (t) { var dif = Math.abs(t.min - agora); if (dif <= 120 && (!best || dif < best.dif)) best = { turno: t.turno, min: t.min, dif: dif }; });
+    var d = new Date(), agora = d.getHours() * 60 + d.getMinutes(), best = null, fixos = turnosFixos();
+    var lista = fixos.length ? fixos.map(function (t) { return { turno: t.nome, min: t.ini, fim: t.fim <= t.ini ? t.fim + 1440 : t.fim }; })
+      : ((S.app && S.app.turnoHoras) || []).map(function (t) { return { turno: t.turno, min: t.min, fim: t.min + 120 }; });
+    lista.forEach(function (t) {
+      if (agora < t.min - 120 || agora >= t.fim) return;
+      var dif = Math.abs(t.min - agora);
+      if (!best || dif < best.dif) best = { turno: t.turno, min: t.min, dif: dif };
+    });
     if (!best) return null;
     best.hora = ('0' + Math.floor(best.min / 60)).slice(-2) + ':' + ('0' + best.min % 60).slice(-2);
     return best;
@@ -317,6 +338,7 @@
       else if (m.vinculado && !naRua(m.vinculado)) { nome = m.vinculado; motivo = 'vinculado à moto'; }
       else if (m.ultimoEntregador && !naRua(m.ultimoEntregador)) { nome = m.ultimoEntregador; motivo = 'último a usar esta moto'; }
       ent.value = nome;
+      if (ent.value !== nome) nome = ''; // nome fora da lista de cadastrados: não sugere
       form.dataset.autoEnt = nome ? '1' : '';
       setHint(form, 'ent', nome ? 'Sugerido: ' + motivo + '. Confira.' : '');
     }
@@ -325,7 +347,8 @@
       var t = turnoPelaHora();
       tur.value = t ? t.turno : '';
       form.dataset.autoTurno = t ? '1' : '';
-      setHint(form, 'turno', t ? 'Sugerido pelo horário (costuma sair às ' + t.hora + ').' : '');
+      setHint(form, 'turno', t ? 'Sugerido pelo horário (turno começa às ' + t.hora + '). Confira.' : '');
+      marcaTurno(form);
     }
   }
 
@@ -352,6 +375,8 @@
     $$('[data-tipo]', form).forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
     delete form.dataset.tipo;
     form.dataset.autoEnt = ''; form.dataset.autoTurno = '';
+    var tu = field(form, 'turno'); if (tu && tu.type === 'hidden') tu.value = ''; // reset() não limpa campo oculto
+    marcaTurno(form);
     $$('[data-hint]', form).forEach(function (h) { h.textContent = ''; });
     ['recebido', 'devolvido'].forEach(function (n) { var i = field(form, n); if (i) i.value = store('resp'); });
     $$('select[data-status]', form).forEach(function (sel) {
@@ -423,7 +448,7 @@
     $$('.check-opt', f).forEach(function (b) { check[b.dataset.check] = b.getAttribute('aria-pressed') === 'true'; });
     var p = { data: field(f, 'data').value || today(), moto: f.dataset.moto, entregador: field(f, 'entregador').value.trim(), turno: field(f, 'turno').value.trim(),
       kmIni: num(field(f, 'kmIni').value), recebido: field(f, 'recebido').value.trim(), checklist: check, fotoIni: photo('s-ini') };
-    var err = !p.moto ? 'Escolha a moto.' : !p.entregador ? 'Informe o entregador.' : !p.turno ? 'Informe o turno.' : p.kmIni == null ? 'Informe o KM de saída.' :
+    var err = !p.moto ? 'Escolha a moto.' : !p.entregador ? 'Escolha o entregador.' : !p.turno ? 'Escolha o turno.' : p.kmIni == null ? 'Informe o KM de saída.' :
       fotoObrig() && !p.fotoIni ? 'Tire a foto do painel com o KM de saída.' : null;
     if (err) return toast(err, true);
     store('resp', p.recebido);
@@ -487,7 +512,7 @@
       kmIni: num(field(f, 'kmIni').value), kmFim: num(field(f, 'kmFim').value), corridas: num(field(f, 'corridas').value),
       recebido: field(f, 'recebido').value.trim(), devolvido: field(f, 'devolvido').value.trim(), status: field(f, 'status').value,
       ocorrencia: field(f, 'ocorrencia').value.trim(), fotoIni: photo('c-ini'), fotoFim: photo('c-fim') };
-    var err = !p.moto ? 'Escolha a moto.' : !p.data ? 'Informe a data.' : !p.entregador ? 'Informe o entregador.' : !p.turno ? 'Informe o turno.' :
+    var err = !p.moto ? 'Escolha a moto.' : !p.data ? 'Informe a data.' : !p.entregador ? 'Escolha o entregador.' : !p.turno ? 'Escolha o turno.' :
       p.kmIni == null ? 'Informe o KM de saída.' : p.kmFim == null ? 'Informe o KM de retorno.' : p.kmFim < p.kmIni ? 'KM de retorno menor que o de saída.' :
       p.corridas == null ? 'Informe as corridas.' : fotoObrig() && !p.fotoFim ? 'Tire a foto do painel com o KM de retorno.' : null;
     if (err) return toast(err, true);
@@ -992,7 +1017,7 @@
     if (b.dataset.go) { go(b.dataset.go, { mode: b.dataset.mode, moto: b.dataset.moto, tipo: b.dataset.tipoGo }); return; }
     if (b.dataset.ent) { go('entregador', { id: b.dataset.ent }); return; }
     if (b.dataset.moto && form) { pickMoto(form, b.dataset.moto); return; }
-    if (b.dataset.turno && form) { field(form, 'turno').value = b.dataset.turno; form.dataset.autoTurno = '0'; setHint(form, 'turno', ''); return; }
+    if (b.dataset.turno && form) { field(form, 'turno').value = b.dataset.turno; form.dataset.autoTurno = '0'; setHint(form, 'turno', ''); marcaTurno(form); return; }
     if (b.dataset.ret) { openRet(+b.dataset.ret); return; }
     if (b.dataset.tipo && form) { pickTipo(b.dataset.tipo); return; }
     if (b.classList.contains('check-opt')) { b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true'); return; }
@@ -1013,6 +1038,8 @@
 
   document.addEventListener('change', function (ev) {
     var t = ev.target;
+    // Escolha manual na lista de entregadores: a sugestão automática não troca mais (alguns celulares só disparam "change").
+    if (t.name === 'entregador' && t.form && t.form.dataset.autoEnt) { t.form.dataset.autoEnt = '0'; setHint(t.form, 'ent', ''); }
     if (t.matches('.photo input[type=file]')) {
       var box = t.closest('.photo'), file = t.files && t.files[0];
       if (!file) return;

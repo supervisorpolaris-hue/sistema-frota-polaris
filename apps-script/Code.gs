@@ -97,6 +97,7 @@ function configurar() {
   if (!ss) throw new Error('Abra o editor pela planilha (Extensões → Apps Script) e rode de novo.');
   PropertiesService.getScriptProperties().setProperty(PROP_SS, ss.getId());
   ['ABAST', 'REC', 'MANUT', 'ENT', 'DOCS'].forEach(function (k) { table_(ss, k); });
+  garanteTurnosConfig_(ss);
   var c = ctx_();
   var drivers = drivers_(c);
   var root = rootFolder_(ss);
@@ -184,6 +185,7 @@ function zerar_(ss, mandarParaLixeira) {
   // Cadastro de entregadores passa a ser só manual (sem importar nomes da Frota/escala automaticamente).
   props.setProperty(PROP_SEM_IMPORTACAO, '1');
   props.setProperty(PROP_SS, ss.getId());
+  garanteTurnosConfig_(ss);
   SpreadsheetApp.flush();
   // Recria as pastas (se foram para a lixeira) e dá acesso aos editores da planilha.
   var root = rootFolder_(ss);
@@ -357,7 +359,7 @@ function frotaPublica_(c, lastKm) {
 function openShift(p) {
   return withLock_(function () {
     var c = ctx_();
-    var d = validateBase_(p);
+    var d = validateBase_(p, c);
     if (d.kmIni == null) throw new Error('Informe o KM de início.');
     if (c.config.fotoObrigatoria && !p.fotoIni) throw new Error('Tire a foto do painel com o KM de saída.');
     var jaAberto = openShifts_(c.reg.rows, c.today).filter(function (o) { return o.moto === d.moto; })[0];
@@ -397,7 +399,7 @@ function closeShift(rowNumber, p) {
 function saveFullShift(p) {
   return withLock_(function () {
     var c = ctx_();
-    var d = validateBase_(p);
+    var d = validateBase_(p, c);
     if (d.kmIni == null) throw new Error('Informe o KM de início.');
     var fim = validateFechamento_(p, d.kmIni);
     // Turno completo é lançado depois: só a foto do KM final é exigida (a da saída pode não existir mais).
@@ -430,7 +432,7 @@ function saveFuel(p) {
     var o = {
       data: data, hora: hora_(c.tz), moto: moto, km: km == null ? '' : km, litros: litros == null ? '' : litros,
       valor: valor, preco: litros > 0 ? round_(valor / litros, 3) : '', posto: String(p.posto || '').trim(),
-      cheio: p.cheio === false ? 'Não' : 'Sim', entregador: String(p.entregador || '').trim(),
+      cheio: p.cheio === false ? 'Não' : 'Sim', entregador: entregadorValido_(c, p.entregador, false),
       obs: String(p.obs || '').trim(), por: userEmail_(), em: new Date()
     };
     if (p.fotoCupom) o.fotoCupom = savePhoto_(c.ss, p.fotoCupom, data, moto + '_cupom');
@@ -1125,7 +1127,7 @@ function readEscala_(ss, today) {
 
 /* ============================== VALIDAÇÃO / CÁLCULOS DE TURNO ============================== */
 
-function validateBase_(p) {
+function validateBase_(p, c) {
   p = p || {};
   var data = parseDate_(p.data);
   if (!data) throw new Error('Data inválida.');
@@ -1135,6 +1137,8 @@ function validateBase_(p) {
   if (!cleanName_(entregador)) throw new Error('Informe o entregador.');
   var turno = String(p.turno || '').trim();
   if (!turno) throw new Error('Informe o turno.');
+  // Dados padronizados (para exportar sem bagunça): turno da lista fixa e entregador do cadastro, com o nome completo.
+  if (c) { turno = turnoValido_(c, turno); entregador = entregadorValido_(c, entregador, true); }
   var kmIni = toNumber_(p.kmIni);
   if (kmIni != null && kmIni < 0) throw new Error('KM de início inválido.');
   return { data: data, moto: moto, entregador: entregador, turno: turno, kmIni: kmIni, recebido: String(p.recebido || '').trim() };
@@ -1244,11 +1248,13 @@ function readRegistro_(ss, tz) {
 }
 
 function readConfig_(ss) {
-  var config = { meta: 12, revKm: 3000, revMeses: 3, fotoObrigatoria: true };
+  var config = { meta: 12, revKm: 3000, revMeses: 3, fotoObrigatoria: true, turnos: [] };
   var sh = ss.getSheetByName(SHEET.CONF);
-  if (!sh || sh.getLastRow() < 2) return config;
+  if (!sh || sh.getLastRow() < 2) { config.turnos = TURNOS_PADRAO.map(parseTurno_); return config; }
   sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
     var nome = norm_(r[0]), val = toNumber_(r[1]);
+    // Linhas "Turno" = turnos fixos (ex.: Turno | 08h-14h). Sem nenhuma linha, valem os turnos padrão.
+    if (nome === 'turno' || /^turno \d+$/.test(nome)) { var t = parseTurno_(r[1]); if (t) config.turnos.push(t); return; }
     // Linha opcional "Foto do KM obrigatória" = Sim/Não (sem a linha: obrigatória)
     if (nome.indexOf('foto') >= 0) {
       var t = norm_(r[1]);
@@ -1260,7 +1266,60 @@ function readConfig_(ss) {
     else if (nome.indexOf('revis') >= 0 && nome.indexOf('km') >= 0) config.revKm = val;
     else if (nome.indexOf('revis') >= 0 && nome.indexOf('mes') >= 0) config.revMeses = val;
   });
+  if (!config.turnos.length) config.turnos = TURNOS_PADRAO.map(parseTurno_);
   return config;
+}
+
+/* ============================== TURNOS FIXOS E ENTREGADOR PADRONIZADO ============================== */
+
+var TURNOS_PADRAO = ['08h-14h', '12h-18h', '18h-00h'];
+
+/** "08h-14h", "08:00 - 14:00", "8h às 14h" → { nome: '08h-14h', ini: 480, fim: 840 } (minutos do dia). */
+function parseTurno_(v) {
+  var s = String(v == null ? '' : v).trim();
+  var m = s.match(/(\d{1,2})\s*(?:h|:)?\s*(\d{2})?\s*(?:h)?\s*(?:-|–|—|a|as|às|ate|até)\s*(\d{1,2})\s*(?:h|:)?\s*(\d{2})?/i);
+  if (!m) return null;
+  var h1 = +m[1], m1 = +(m[2] || 0), h2 = +m[3], m2 = +(m[4] || 0);
+  if (h1 > 24 || h2 > 24 || m1 > 59 || m2 > 59) return null;
+  var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  var rot = function (h, mm) { return p2(h % 24) + 'h' + (mm ? p2(mm) : ''); };
+  return { nome: rot(h1, m1) + '-' + rot(h2, m2), ini: (h1 % 24) * 60 + m1, fim: (h2 % 24) * 60 + m2 };
+}
+
+/** Aceita o turno só se for um dos fixos (sem diferença de maiúsculas/espaços) e devolve o nome padronizado. */
+function turnoValido_(c, turno) {
+  var lista = c.config.turnos || [];
+  if (!lista.length) return turno;
+  var t = parseTurno_(turno), k = norm_(turno).replace(/\s/g, '');
+  var achou = lista.filter(function (x) { return norm_(x.nome) === k || (t && t.nome === x.nome); })[0];
+  if (!achou) throw new Error('Escolha um dos turnos: ' + lista.map(function (x) { return x.nome; }).join(', ') + '.');
+  return achou.nome;
+}
+
+/** Entregador só do cadastro (ativo). Devolve o nome completo como está na tela Equipe. */
+function entregadorValido_(c, nome, obrigatorio) {
+  var n = cleanName_(nome);
+  if (!n) { if (obrigatorio) throw new Error('Informe o entregador.'); return ''; }
+  var todos = drivers_(c), ativos = todos.filter(ativo_);
+  var d = matchDriver_(n, ativos);
+  if (d) return d.nome;
+  var inativo = matchDriver_(n, todos);
+  if (inativo) throw new Error(inativo.nome + ' está inativo no cadastro. Reative em Equipe ou escolha outro entregador.');
+  throw new Error('"' + n + '" não está cadastrado. Cadastre em Equipe → Novo e depois escolha na lista.');
+}
+
+/** Garante as linhas de turno na aba Configurações (para ficarem visíveis e editáveis na planilha). */
+function garanteTurnosConfig_(ss) {
+  var sh = ss.getSheetByName(SHEET.CONF);
+  if (!sh) { sh = ss.insertSheet(SHEET.CONF); sh.getRange(1, 1, 1, 2).setValues([['Parâmetro', 'Valor']]); }
+  var last = sh.getLastRow();
+  var tem = last >= 2 && sh.getRange(2, 1, last - 1, 1).getValues().some(function (r) { var n = norm_(r[0]); return n === 'turno' || /^turno \d+$/.test(n); });
+  if (tem) return false;
+  var linhas = TURNOS_PADRAO.map(function (t) { return ['Turno', t]; });
+  var rg = sh.getRange(Math.max(last, 1) + 1, 1, linhas.length, 2);
+  rg.setNumberFormat('@');
+  rg.setValues(linhas);
+  return true;
 }
 
 var FROTA_COLS = {
@@ -1360,6 +1419,7 @@ function saveMoto(p) {
     var alvo = original ? c.frota.filter(function (f) { return f.id === original; })[0] : null;
     if (original && !alvo) throw new Error('Moto não encontrada. Atualize a tela.');
     var d = validaMoto_(p, !alvo, c.today, c.tz);
+    d.entregador = entregadorValido_(c, d.entregador, false);
     if (alvo && d.id !== alvo.id) throw new Error('A identificação da moto não pode ser mudada (os lançamentos usam esse nome).');
     c.frota.forEach(function (f) {
       if (f === alvo) return;

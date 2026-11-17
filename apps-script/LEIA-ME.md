@@ -13,7 +13,9 @@ Ele grava na planilha **Controle_Frota_Polaris** e guarda fotos e documentos no 
 | **Equipe** | Cadastro dos entregadores (dados, CNH, salário, PIX, camisa, situação) e **documentos**: CNH, RG/CPF, comprovante de residência, contrato/termo da moto e outros. |
 | **Mais** | Receita do dia, Manutenção (revisão, óleo, pneu… — uma revisão atualiza a aba Frota sozinha), **Motos** (cadastrar, editar e excluir moto; KM, revisão e custos de cada uma), links da planilha e da pasta de arquivos. |
 
-**Saída rápida:** ao tocar na moto, o app já preenche o **KM**, o **entregador** (o vinculado à moto no cadastro; se não houver, o último que usou a moto, só entre ativos e que não estejam na rua com outra moto) e o **turno** pelo horário (o turno que costuma sair até 2 h antes ou depois da hora atual, aprendido dos últimos 60 dias). Cada sugestão aparece com a frase "Sugerido: …" embaixo do campo. O que a pessoa digita nunca é trocado pela sugestão. No **Abastecer**, o entregador sugerido é quem está com a moto na rua. Nos primeiros dias depois de zerar, o turno não é sugerido: o app precisa de pelo menos 2 saídas de cada turno para aprender o horário.
+**Turnos fixos e entregador da lista:** o turno é escolhido em botões (padrão: **08h-14h**, **12h-18h**, **18h-00h**) e o entregador numa lista com os **cadastrados e ativos** da tela Equipe. Não dá para digitar outro nome, então a planilha fica sempre com o mesmo turno e o nome completo do entregador (bom para exportar e comparar com outros relatórios). Quem não estiver na lista precisa ser cadastrado antes em Equipe → Novo.
+
+**Saída rápida:** ao tocar na moto, o app já preenche o **KM**, o **entregador** (o vinculado à moto no cadastro; se não houver, o último que usou a moto, só entre ativos e que não estejam na rua com outra moto) e o **turno** pelo horário (o que começa mais perto da hora atual, a partir de 2 h antes do início). Cada sugestão aparece com "Sugerido: …" embaixo do campo; o que a pessoa escolher nunca é trocado pela sugestão. No **Abastecer**, o entregador sugerido é quem está com a moto na rua.
 
 **Cadastro de moto:** a identificação (ex.: MOTO 01) não muda depois de salva, porque os lançamentos usam esse nome. O KM informado no cadastro vale como primeira leitura da moto (o app já sugere esse KM na primeira saída e calcula a revisão). Placa no formato ABC1D23 ou ABC1234; o app recusa identificação ou placa repetida e KM da última revisão maior que o KM atual. Só dá para excluir moto que ainda não tem lançamentos; se ela saiu da frota, apague a linha na aba Frota.
 
@@ -96,6 +98,7 @@ Não funciona pelo app, só pela planilha.
 ## Ajustes
 
 - **Meta de corridas e intervalo de revisão:** aba Configurações da planilha.
+- **Turnos fixos:** aba Configurações, uma linha por turno com `Turno` na coluna A e o horário na coluna B (ex.: `08h-14h`, `18h-00h`). As linhas são criadas sozinhas pelo **Zerar o sistema** ou pela função `configurar`. Se apagar todas, voltam a valer os 3 turnos padrão.
 - **Foto do KM obrigatória:** por padrão, a saída e o retorno só são gravados com a foto do painel (no "Turno completo", só a do KM final). Para deixar opcional, crie na aba Configurações a linha `Foto do KM obrigatória` com o valor `Não` (com `Sim`, volta a exigir).
 - **Salário de cada entregador:** tela Equipe. É o salário que entra no lucro.
 - **Limites de alerta** (300 km, 15 dias, CNH 30 dias): no começo do `Código.gs`.
