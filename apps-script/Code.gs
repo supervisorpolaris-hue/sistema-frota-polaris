@@ -98,6 +98,7 @@ function configurar() {
   PropertiesService.getScriptProperties().setProperty(PROP_SS, ss.getId());
   ['ABAST', 'REC', 'MANUT', 'ENT', 'DOCS'].forEach(function (k) { table_(ss, k); });
   garanteTurnosConfig_(ss);
+  formataAbas_(ss);
   var c = ctx_();
   var drivers = drivers_(c);
   var root = rootFolder_(ss);
@@ -130,6 +131,8 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('Frota Polaris')
     .addItem('Montar escala deste mês', 'escalaEsteMes')
     .addItem('Montar escala do próximo mês', 'escalaProximoMes')
+    .addSeparator()
+    .addItem('Padronizar abas da planilha…', 'padronizarPlanilha')
     .addSeparator()
     .addItem('Zerar o sistema…', 'zerarSistema')
     .addToUi();
@@ -349,6 +352,77 @@ function coresEscala_(sh, turnos) {
     regras.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(t).setBackground(CORES_TURNO[i % CORES_TURNO.length]).setRanges(area).build());
   });
   sh.setConditionalFormatRules(regras);
+}
+
+/* ============================== PADRONIZAR ABAS (menu da planilha) ============================== */
+
+// Abas da planilha manual antiga que o sistema não usa mais (o app tem o próprio painel).
+var ABAS_OBSOLETAS = ['painel'];
+// Linhas da aba Configurações que só alimentavam essas abas antigas.
+var CONFIG_OBSOLETAS = ['receita liquida media por corrida'];
+var COR_SISTEMA = '#fd4502';
+
+/**
+ * Menu: Frota Polaris → Padronizar abas da planilha…
+ * Apaga as abas antigas que o sistema não usa (só as conhecidas, ex.: Painel) e deixa o cabeçalho
+ * de todas as abas do sistema no padrão laranja. Abas desconhecidas não são tocadas (só avisa).
+ */
+function padronizarPlanilha() {
+  var ui = SpreadsheetApp.getUi(); // fora da planilha (pelo app) isso falha e nada é feito
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var plano = planoPadronizar_(ss);
+  var msg = 'Deixa o cabeçalho de todas as abas do sistema no padrão laranja (1ª linha fixa).';
+  if (plano.apagar.length) msg += '\n\nAPAGA as abas que o sistema não usa: ' + plano.apagar.join(', ') + '. (O Painel antigo só repetia, desatualizado, o que o Início do app já mostra.)';
+  if (plano.linhas.length) msg += '\n\nRemove da aba Configurações: ' + plano.linhas.join(', ') + ' (só alimentava o Painel antigo).';
+  if (plano.outras.length) msg += '\n\nNÃO mexe nestas abas, que não são do sistema: ' + plano.outras.join(', ') + '.';
+  if (ui.alert('Padronizar abas', msg + '\n\nContinuar?', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  var r = withLock_(function () { return padronizar_(ss); });
+  ui.alert('Pronto', 'Abas no padrão: ' + r.formatadas.join(', ') + '.' + (r.apagadas.length ? '\nApagadas: ' + r.apagadas.join(', ') + '.' : '') +
+    (r.linhas.length ? '\nRemovido de Configurações: ' + r.linhas.join(', ') + '.' : ''), ui.ButtonSet.OK);
+}
+
+function planoPadronizar_(ss) {
+  var sistema = Object.keys(SHEET).map(function (k) { return SHEET[k]; });
+  var nomes = ss.getSheets().map(function (s) { return s.getName(); });
+  var apagar = nomes.filter(function (n) { return ABAS_OBSOLETAS.indexOf(norm_(n)) >= 0; });
+  var outras = nomes.filter(function (n) { return sistema.indexOf(n) < 0 && apagar.indexOf(n) < 0; });
+  var linhas = [], conf = ss.getSheetByName(SHEET.CONF);
+  if (conf && conf.getLastRow() >= 2) {
+    conf.getRange(2, 1, conf.getLastRow() - 1, 1).getValues().forEach(function (r) {
+      var n = norm_(String(r[0]).replace(/\(.*\)/, ''));
+      if (CONFIG_OBSOLETAS.indexOf(n) >= 0) linhas.push(String(r[0]).trim());
+    });
+  }
+  return { apagar: apagar, outras: outras, linhas: linhas };
+}
+
+function padronizar_(ss) {
+  var plano = planoPadronizar_(ss);
+  plano.apagar.forEach(function (n) { var sh = ss.getSheetByName(n); if (sh) ss.deleteSheet(sh); });
+  var conf = ss.getSheetByName(SHEET.CONF);
+  if (conf && plano.linhas.length) {
+    var v = conf.getRange(1, 1, conf.getLastRow(), 1).getValues();
+    for (var i = v.length - 1; i >= 1; i--) if (plano.linhas.indexOf(String(v[i][0]).trim()) >= 0) conf.deleteRow(i + 1);
+  }
+  return { formatadas: formataAbas_(ss), apagadas: plano.apagar, linhas: plano.linhas };
+}
+
+/** Cabeçalho laranja (texto branco, negrito), 1ª linha fixa e aba laranja em todas as abas do sistema. Não apaga nada. */
+function formataAbas_(ss) {
+  var feitas = [];
+  Object.keys(SHEET).forEach(function (k) {
+    var sh = ss.getSheetByName(SHEET[k]);
+    if (!sh) return;
+    sh.setTabColor(COR_SISTEMA);
+    feitas.push(SHEET[k]);
+    if (k === 'ESCALA') return; // a escala tem um cabeçalho laranja por mês (montado pelo menu)
+    var cols = sh.getLastColumn();
+    if (!cols) return;
+    sh.getRange(1, 1, 1, cols).setBackground(COR_SISTEMA).setFontColor('#ffffff').setFontWeight('bold').setVerticalAlignment('middle');
+    sh.setFrozenRows(1);
+    sh.setRowHeight(1, 30);
+  });
+  return feitas;
 }
 
 function importacaoDesligada_() {

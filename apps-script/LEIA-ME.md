@@ -92,6 +92,15 @@ O app usa a escala para:
 
 O formato antigo (`TR` nos dias) continua sendo lido, sem horário.
 
+## Padronizar abas
+
+Na planilha: menu **Frota Polaris → Padronizar abas da planilha…**. Mostra o que vai fazer e pede confirmação:
+- apaga as abas da planilha manual antiga que o sistema não usa (hoje: **Painel**) e, na aba Configurações, a linha "Receita líquida média por corrida" (só alimentava esse painel);
+- deixa o cabeçalho de todas as abas do sistema no padrão laranja (texto branco, 1ª linha fixa) e a aba em laranja;
+- **não mexe** em abas que não são do sistema (só avisa quais são).
+
+A função `configurar` também aplica o padrão de cores, sem apagar nada.
+
 ## Zerar o sistema (começar do zero)
 
 Na planilha: menu **Frota Polaris → Zerar o sistema…** (o menu aparece ao abrir a planilha). Pede duas confirmações e:
