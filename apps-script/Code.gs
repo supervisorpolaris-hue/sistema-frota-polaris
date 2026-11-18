@@ -128,6 +128,9 @@ function compartilharPasta() {
 /** Menu "Frota Polaris" na planilha. */
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Frota Polaris')
+    .addItem('Montar escala deste mês', 'escalaEsteMes')
+    .addItem('Montar escala do próximo mês', 'escalaProximoMes')
+    .addSeparator()
     .addItem('Zerar o sistema…', 'zerarSistema')
     .addToUi();
 }
@@ -173,7 +176,13 @@ function zerar_(ss, mandarParaLixeira) {
     if (sh && limparDados_(sh)) limpas.push(SHEET[k]);
   });
   var esc = ss.getSheetByName(SHEET.ESCALA);
-  if (esc) { modeloEscala_(esc, dateKey_(new Date(), tz)); limpas.push(SHEET.ESCALA); }
+  if (esc) {
+    esc.clear();
+    esc.getRange(1, 1, esc.getMaxRows(), esc.getMaxColumns()).clearDataValidations();
+    var hk = dateKey_(new Date(), tz);
+    montarEscala_(ss, +hk.slice(0, 4), +hk.slice(5, 7));
+    limpas.push(SHEET.ESCALA);
+  }
 
   var props = PropertiesService.getScriptProperties();
   var foiLixeira = false;
@@ -209,21 +218,137 @@ function limparDados_(sh) {
   return true;
 }
 
-/** Deixa a aba ESCALA com o modelo do mês atual, no formato que o app entende (falta só pôr os nomes e TR/F). */
-function modeloEscala_(sh, hojeKey) {
-  var y = +hojeKey.slice(0, 4), m = +hojeKey.slice(5, 7);
-  var nomesMes = Object.keys(MESES).filter(function (k) { return MESES[k] === m; })[0];
-  var nomeMes = nomesMes === 'marco' ? 'MARÇO' : nomesMes.toUpperCase();
-  var dias = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  var sem = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
-  var linhaDias = ['DIAS DO MÊS'], linhaSem = ['DIA DA SEMANA'];
-  for (var d = 1; d <= dias; d++) { linhaDias.push(d); linhaSem.push(sem[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]); }
-  var titulo = ['ESCALA MÊS DE ' + nomeMes + ' ' + y];
-  while (titulo.length < linhaDias.length) titulo.push('');
-  sh.clearContents();
-  var need = linhaDias.length;
-  if (sh.getMaxColumns() < need) sh.insertColumnsAfter(sh.getMaxColumns(), need - sh.getMaxColumns());
-  sh.getRange(1, 1, 3, need).setValues([titulo, linhaDias, linhaSem]);
+/* ============================== ESCALA (aba montada pelo menu) ============================== */
+
+var SEMANA = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
+var ESCALA_COLS = 1 + 31; // nome + 31 dias (todos os meses alinhados)
+var CORES_TURNO = ['#ffe3d3', '#fff1bf', '#d9e8ff', '#dff3dc', '#f1e0ff'];
+
+/** Menu: Frota Polaris → Montar escala deste mês / do próximo mês. */
+function escalaEsteMes() { escalaMenu_(0); }
+function escalaProximoMes() { escalaMenu_(1); }
+
+function escalaMenu_(desloc) {
+  var ui = SpreadsheetApp.getUi(); // fora da planilha (pelo app) isso falha e nada é feito
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hoje = dateKey_(new Date(), ss.getSpreadsheetTimeZone());
+  var ano = +hoje.slice(0, 4), mes = +hoje.slice(5, 7) + desloc;
+  if (mes > 12) { mes -= 12; ano++; }
+  var r = withLock_(function () { return montarEscala_(ss, ano, mes); });
+  ui.alert('Escala de ' + r.mes,
+    (r.criada ? 'Grade criada na aba ESCALA' + (r.incluidos.length ? ' com ' + r.incluidos.length + ' entregador(es).' : ', ainda sem entregadores (cadastre na tela Equipe e rode de novo).')
+      : 'A grade deste mês já existia. ' + (r.incluidos.length ? 'Incluídos: ' + r.incluidos.join(', ') + '.' : 'Nenhum entregador novo para incluir.')) +
+    '\n\nEm cada dia, escolha na lista o turno (' + r.turnos.join(', ') + ') ou F para folga. Deixe vazio quem não estiver escalado.' +
+    '\nPara incluir alguém depois: cadastre na tela Equipe e use este menu de novo (o que já foi preenchido não é apagado).', ui.ButtonSet.OK);
+}
+
+function nomeMes_(m) {
+  var k = Object.keys(MESES).filter(function (x) { return MESES[x] === m; })[0];
+  return k === 'marco' ? 'MARÇO' : k.toUpperCase();
+}
+
+/**
+ * Cria ou completa o bloco do mês na aba ESCALA, no formato que o app lê:
+ *   ESCALA MÊS DE <MÊS> <ANO> / DIAS DO MÊS (1..N) / DIA DA SEMANA / uma linha por entregador ativo.
+ * Cada dia tem lista com os turnos fixos e F (folga); o nome vem da lista de cadastrados.
+ * Se o mês já existe, só acrescenta quem falta: nada do que foi preenchido é apagado.
+ */
+function montarEscala_(ss, ano, mes) {
+  var turnos = readConfig_(ss).turnos.map(function (t) { return t.nome; });
+  var tEnt = table_(ss, 'ENT');
+  var ativos = rows_(tEnt).filter(function (d) { return String(d.nome || '').trim() && String(d.id || '').trim() && ativo_(d); })
+    .map(function (d) { return String(d.nome).trim().replace(/\s+/g, ' '); })
+    .sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+  var sh = ss.getSheetByName(SHEET.ESCALA) || ss.insertSheet(SHEET.ESCALA);
+  if (sh.getMaxColumns() < ESCALA_COLS) sh.insertColumnsAfter(sh.getMaxColumns(), ESCALA_COLS - sh.getMaxColumns());
+  var dias = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  var titulo = 'ESCALA MÊS DE ' + nomeMes_(mes) + ' ' + ano;
+  var bloco = acharBlocoEscala_(sh, titulo);
+  var incluidos = [];
+
+  if (!bloco) {
+    var last = sh.getLastRow(), ini = last ? last + 2 : 1, nLin = 3 + ativos.length;
+    if (sh.getMaxRows() < ini + nLin) sh.insertRowsAfter(sh.getMaxRows(), ini + nLin - sh.getMaxRows());
+    var tit = [titulo], lDias = ['DIAS DO MÊS'], lSem = ['DIA DA SEMANA'];
+    for (var d = 1; d <= 31; d++) {
+      tit.push('');
+      lDias.push(d <= dias ? d : '');
+      lSem.push(d <= dias ? SEMANA[new Date(Date.UTC(ano, mes - 1, d)).getUTCDay()] : '');
+    }
+    var linhas = [tit, lDias, lSem].concat(ativos.map(function (n) { var r = [n]; for (var j = 0; j < 31; j++) r.push(''); return r; }));
+    sh.getRange(ini, 1, nLin, ESCALA_COLS).setValues(linhas);
+    formataCabecalhoEscala_(sh, ini, dias, ano, mes);
+    if (ativos.length) validaLinhasEscala_(ss, sh, ini + 3, ativos.length, dias, turnos);
+    incluidos = ativos.slice();
+  } else {
+    // Já está no mês se o nome bate (inclusive só o primeiro nome, como "RAFAEL" = "Rafael Mailson").
+    ativos.filter(function (n) { return !bloco.nomes.some(function (x) { return sameName_(x, n); }); }).forEach(function (n) {
+      sh.insertRowsAfter(bloco.ultima, 1);
+      bloco.ultima++;
+      var r = [n];
+      for (var j = 0; j < 31; j++) r.push('');
+      sh.getRange(bloco.ultima, 1, 1, ESCALA_COLS).setValues([r]);
+      validaLinhasEscala_(ss, sh, bloco.ultima, 1, bloco.dias, turnos);
+      incluidos.push(n);
+    });
+  }
+  sh.setFrozenColumns(1);
+  sh.setColumnWidth(1, 200);
+  sh.setColumnWidths(2, 31, 66);
+  coresEscala_(sh, turnos);
+  SpreadsheetApp.flush();
+  return { mes: nomeMes_(mes).toLowerCase() + '/' + ano, criada: !bloco, incluidos: incluidos, turnos: turnos.concat(['F']) };
+}
+
+/** Localiza o bloco do mês: linha do título, quantos dias e os nomes já listados (até o próximo título). */
+function acharBlocoEscala_(sh, titulo) {
+  var last = sh.getLastRow();
+  if (!last) return null;
+  var v = sh.getRange(1, 1, last, ESCALA_COLS).getValues();
+  var alvo = norm_(titulo), t = -1;
+  for (var i = 0; i < v.length; i++) if (norm_(v[i][0]) === alvo) { t = i; break; }
+  if (t < 0) return null;
+  var dias = 0;
+  if (v[t + 1]) v[t + 1].forEach(function (x, j) { if (j && toNumber_(x)) dias = Math.max(dias, toNumber_(x)); });
+  var nomes = [], ultima = t + 3; // linha (1-based) do DIA DA SEMANA
+  for (var k = t + 3; k < v.length; k++) {
+    var a = norm_(v[k][0]);
+    if (/^escala\s+(do\s+)?mes\s+de/.test(a)) break;
+    if (a) { nomes.push(String(v[k][0]).trim()); ultima = k + 1; }
+  }
+  return { linha: t + 1, dias: dias || 31, nomes: nomes, ultima: ultima };
+}
+
+/** Listas: nome (dos cadastrados na tela Equipe) e, em cada dia, turno fixo ou F. */
+function validaLinhasEscala_(ss, sh, linha, n, dias, turnos) {
+  var tEnt = table_(ss, 'ENT');
+  var colNome = tEnt.idx.nome + 1;
+  var listaNomes = tEnt.sheet.getRange(2, colNome, Math.max(tEnt.sheet.getMaxRows() - 1, 1), 1);
+  sh.getRange(linha, 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()
+    .requireValueInRange(listaNomes, true).setAllowInvalid(false)
+    .setHelpText('Escolha um entregador cadastrado na tela Equipe do app.').build());
+  sh.getRange(linha, 2, n, dias).setDataValidation(SpreadsheetApp.newDataValidation()
+    .requireValueInList(turnos.concat(['F']), true).setAllowInvalid(false)
+    .setHelpText('Turno do dia (' + turnos.join(', ') + ') ou F para folga. Vazio = não escalado.').build());
+}
+
+function formataCabecalhoEscala_(sh, ini, dias, ano, mes) {
+  sh.getRange(ini, 1, 1, ESCALA_COLS).setBackground('#fd4502').setFontColor('#ffffff').setFontWeight('bold');
+  sh.getRange(ini + 1, 1, 2, ESCALA_COLS).setBackground('#fff1e8').setFontWeight('bold');
+  for (var d = 1; d <= dias; d++) {
+    var dow = new Date(Date.UTC(ano, mes - 1, d)).getUTCDay();
+    if (dow === 0 || dow === 6) sh.getRange(ini + 1, 1 + d, 2, 1).setBackground('#ffd2b8');
+  }
+}
+
+/** Cores automáticas: cada turno uma cor, F (folga) cinza. Vale para a aba inteira. */
+function coresEscala_(sh, turnos) {
+  var area = [sh.getRange(1, 2, sh.getMaxRows(), 31)];
+  var regras = [SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('F').setBackground('#e6e6e6').setFontColor('#777777').setRanges(area).build()];
+  turnos.forEach(function (t, i) {
+    regras.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(t).setBackground(CORES_TURNO[i % CORES_TURNO.length]).setRanges(area).build());
+  });
+  sh.setConditionalFormatRules(regras);
 }
 
 function importacaoDesligada_() {
@@ -308,6 +433,8 @@ function app_(c) {
     entregadores: drivers.filter(ativo_).map(function (d) { return d.nome; }),
     turnos: byFrequency_(c.reg.rows, 'turno'),
     turnoHoras: turnoHoras_(c.reg.rows, c.today),
+    escalaHoje: escalaHoje_(c, drivers).filter(function (e) { return e.cadastrado; })
+      .map(function (e) { return { nome: e.nome, turno: e.turno, saiu: e.emTurno }; }),
     responsaveis: byFrequency_(c.reg.rows.map(function (r) { return { x: r.recebido }; })
       .concat(c.reg.rows.map(function (r) { return { x: r.devolvido }; })), 'x'),
     ocorrencias: byFrequency_(c.reg.rows, 'ocorrencia').slice(0, 12),
@@ -607,7 +734,7 @@ function dash_(c, period) {
   var rec = rec_(c);
   var drivers = drivers_(c);
   var docs = docs_(c);
-  var escala = readEscala_(c.ss, c.today);
+  var escala = escala_(c);
   var meta = c.config.meta;
   var inR = function (k, a, b) { return k && k >= a && k <= b; };
 
@@ -699,12 +826,7 @@ function dash_(c, period) {
     .sort(function (a, b) { return b.corridas - a.corridas || b.turnos - a.turnos; });
 
   // Escala de hoje
-  var escalaHoje = (escala[c.today] || []).map(function (n) {
-    var d = matchDriver_(n, drivers);
-    var nome = d ? d.nome : titleCase_(n);
-    var emTurno = turnos.some(function (r) { return r.key === c.today && sameName_(r.entregador, nome); });
-    return { nome: nome, emTurno: emTurno };
-  });
+  var escalaHoje = escalaHoje_(c, drivers).map(function (e) { return { nome: e.nome, turno: e.turno, emTurno: e.emTurno }; });
 
   var alertas = buildAlerts_(c, motos, drivers, docs, turnos, rec, P, cur);
   var insights = buildInsights_(c, P, cur, prev, motos, frotaMedia, ranking, drivers);
@@ -851,8 +973,8 @@ function perfByDriver_(c, drivers, a, b, escala) {
   if (escala) {
     Object.keys(escala).forEach(function (k) {
       if (k < a || k > b || k > c.today) return;
-      escala[k].forEach(function (n) {
-        var d = matchDriver_(n, drivers);
+      escala[k].forEach(function (e) {
+        var d = matchDriver_(e.nome, drivers);
         if (!d) return;
         out[d.id].escalados++;
         if (k < c.today && !out[d.id].dias[k]) out[d.id].faltas++;
@@ -1102,7 +1224,11 @@ function driverFolder_(c, t, d) {
 
 /* ============================== ESCALA ============================== */
 
-/** Lê a aba ESCALA (blocos "ESCALA MÊS DE SETEMBRO 2026") → { 'aaaa-mm-dd': [nomes com TR] }. */
+/**
+ * Lê a aba ESCALA (blocos "ESCALA MÊS DE NOVEMBRO 2026") → { 'aaaa-mm-dd': [{ nome, turno }] }.
+ * Conta como escalado quem tem no dia um turno (08h-14h…) ou "TR" (formato antigo, sem horário → turno '').
+ * F, FOLGA ou qualquer outra anotação = não trabalha.
+ */
 function readEscala_(ss, today) {
   var sh = ss.getSheetByName(SHEET.ESCALA);
   var out = {};
@@ -1117,12 +1243,33 @@ function readEscala_(ss, today) {
     if (a.indexOf('dias do mes') === 0) { dias = row.map(function (x, i) { return i ? toNumber_(x) : null; }); return; }
     if (!a || a.indexOf('dia da semana') === 0 || !dias) return;
     row.forEach(function (x, i) {
-      if (!i || !dias[i] || norm_(x) !== 'tr') return;
+      if (!i || !dias[i]) return;
+      var n = norm_(x), turno = null;
+      if (n === 'tr') turno = '';
+      else if (n && n !== 'f' && n !== 'folga') { var t = parseTurno_(x); if (t) turno = t.nome; }
+      if (turno === null) return;
       var k = cur.ano + '-' + (cur.mes < 10 ? '0' : '') + cur.mes + '-' + (dias[i] < 10 ? '0' : '') + dias[i];
-      (out[k] = out[k] || []).push(String(row[0]).trim());
+      (out[k] = out[k] || []).push({ nome: String(row[0]).trim(), turno: turno });
     });
   });
   return out;
+}
+
+function escala_(c) { return c._escala || (c._escala = readEscala_(c.ss, c.today)); }
+
+/** Escala de hoje com o nome do cadastro, o turno e se já saiu (para o Início e a saída rápida). */
+function escalaHoje_(c, drivers) {
+  var ordem = {};
+  (c.config.turnos || []).forEach(function (t, i) { ordem[t.nome] = i; });
+  return (escala_(c)[c.today] || []).map(function (e) {
+    var d = matchDriver_(e.nome, drivers);
+    var nome = d ? d.nome : titleCase_(e.nome);
+    var saiu = c.reg.rows.some(function (r) { return r.key === c.today && sameName_(r.entregador, nome); });
+    return { nome: nome, turno: e.turno, emTurno: saiu, cadastrado: !!(d && ativo_(d)) };
+  }).sort(function (a, b) {
+    var oa = a.turno in ordem ? ordem[a.turno] : 99, ob = b.turno in ordem ? ordem[b.turno] : 99;
+    return oa - ob || a.nome.localeCompare(b.nome, 'pt-BR');
+  });
 }
 
 /* ============================== VALIDAÇÃO / CÁLCULOS DE TURNO ============================== */

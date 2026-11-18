@@ -334,7 +334,13 @@
       // Na saída, não sugere quem já está na rua com outra moto.
       var naRua = function (n) { return fid !== 'f-abast' && S.app.openShifts.some(function (o) { return normTxt(o.entregador) === normTxt(n); }); };
       var nome = '', motivo = '';
+      // Saída: primeiro quem está na escala de hoje para o turno deste horário e ainda não saiu
+      // (preferindo o vinculado à moto ou o último que usou), depois vinculado / último.
+      var th = fid === 'f-saida' ? turnoPelaHora() : null;
+      var escalados = th ? escalaHoje().filter(function (e) { return e.turno === th.turno && !e.saiu && !naRua(e.nome); }) : [];
+      var daMoto = escalados.filter(function (e) { return e.nome === m.vinculado; })[0] || escalados.filter(function (e) { return e.nome === m.ultimoEntregador; })[0];
       if (fid === 'f-abast' && m.open && m.open.entregador) { nome = m.open.entregador; motivo = 'está com a moto agora'; }
+      else if (escalados.length) { nome = (daMoto || escalados[0]).nome; motivo = 'na escala de hoje (' + th.turno + ')'; }
       else if (m.vinculado && !naRua(m.vinculado)) { nome = m.vinculado; motivo = 'vinculado à moto'; }
       else if (m.ultimoEntregador && !naRua(m.ultimoEntregador)) { nome = m.ultimoEntregador; motivo = 'último a usar esta moto'; }
       ent.value = nome;
@@ -342,14 +348,20 @@
       form.dataset.autoEnt = nome ? '1' : '';
       setHint(form, 'ent', nome ? 'Sugerido: ' + motivo + '. Confira.' : '');
     }
-    // Turno pelo horário só na saída (o "turno completo" é lançado depois, em outro horário).
-    if (tur && fid === 'f-saida' && (tur.value === '' || form.dataset.autoTurno === '1')) {
-      var t = turnoPelaHora();
-      tur.value = t ? t.turno : '';
-      form.dataset.autoTurno = t ? '1' : '';
-      setHint(form, 'turno', t ? 'Sugerido pelo horário (turno começa às ' + t.hora + '). Confira.' : '');
-      marcaTurno(form);
-    }
+    sugerirTurno(form);
+  }
+  function escalaHoje() { return (S.app && S.app.escalaHoje) || []; }
+  /** Turno da saída: o da escala de hoje do entregador escolhido; se ele não estiver na escala, pelo horário. */
+  function sugerirTurno(form) {
+    var tur = field(form, 'turno'), ent = field(form, 'entregador');
+    // Só na saída (o "turno completo" é lançado depois, em outro horário) e sem trocar o que a pessoa escolheu.
+    if (!tur || form.getAttribute('id') !== 'f-saida' || !(tur.value === '' || form.dataset.autoTurno === '1')) return;
+    var e = ent && ent.value ? escalaHoje().filter(function (x) { return x.nome === ent.value && x.turno; })[0] : null;
+    var t = e ? null : turnoPelaHora();
+    tur.value = e ? e.turno : t ? t.turno : '';
+    form.dataset.autoTurno = tur.value ? '1' : '';
+    setHint(form, 'turno', e ? 'Sugerido: turno da escala de hoje. Confira.' : t ? 'Sugerido pelo horário (turno começa às ' + t.hora + '). Confira.' : '');
+    marcaTurno(form);
   }
 
   function kmHint(form) {
@@ -874,8 +886,16 @@
       }).join('') + '</div>' : '';
 
     // escala de hoje
+    // Escala de hoje (aba ESCALA): turno de cada um, quem já saiu e quem está atrasado (15 min depois do início do turno).
+    var agoraMin = new Date().getHours() * 60 + new Date().getMinutes();
+    var inicioTurno = function (t) { var f = turnosFixos().filter(function (x) { return x.nome === t; })[0]; return f ? f.ini : null; };
     $('#home-escala').innerHTML = d.escalaHoje.length ? '<div class="sec-title"><h2>Escala de hoje</h2><span class="small muted">' + d.escalaHoje.filter(function (e) { return e.emTurno; }).length + '/' + d.escalaHoje.length + ' já saíram</span></div><div class="chips">' +
-      d.escalaHoje.map(function (e) { return '<span class="person"><span class="avatar">' + esc(initials(e.nome)) + '</span>' + esc(firstNames(e.nome)) + '<span class="st ' + (e.emTurno ? 'on' : 'off') + '">' + (e.emTurno ? '● rodando' : 'aguardando') + '</span></span>'; }).join('') + '</div>' : '';
+      d.escalaHoje.map(function (e) {
+        var ini = inicioTurno(e.turno), atrasado = !e.emTurno && ini != null && agoraMin > ini + 15;
+        var st = e.emTurno ? ['on', '● saiu'] : atrasado ? ['late', 'atrasado'] : ['off', 'aguardando'];
+        return '<span class="person"><span class="avatar">' + esc(initials(e.nome)) + '</span>' + esc(firstNames(e.nome)) +
+          (e.turno ? '<small class="muted">' + esc(e.turno) + '</small>' : '') + '<span class="st ' + st[0] + '">' + st[1] + '</span></span>';
+      }).join('') + '</div>' : '';
 
     var K = [
       { k: 'receita', l: 'Receita', i: 'money', f: money, pol: 1, s: c.receita ? (c.receitaCorrida ? money(c.receitaCorrida) + ' por corrida' : '') : 'lance em Receita do dia' },
@@ -1040,6 +1060,7 @@
     var t = ev.target;
     // Escolha manual na lista de entregadores: a sugestão automática não troca mais (alguns celulares só disparam "change").
     if (t.name === 'entregador' && t.form && t.form.dataset.autoEnt) { t.form.dataset.autoEnt = '0'; setHint(t.form, 'ent', ''); }
+    if (t.name === 'entregador' && t.form) sugerirTurno(t.form); // escolheu o entregador: turno da escala dele
     if (t.matches('.photo input[type=file]')) {
       var box = t.closest('.photo'), file = t.files && t.files[0];
       if (!file) return;

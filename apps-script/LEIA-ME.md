@@ -76,12 +76,28 @@ Quem não tiver acesso vê a mensagem "Sem acesso". Cada lançamento registra o 
 - As pastas de fotos do mês ficam guardadas nas propriedades do script (`FOTOS_<planilha>_<aaaa-mm>`). Se mudar a pasta de arquivos de lugar, apague essas propriedades em **Configurações do projeto → Propriedades do script**.
 - Para medir: no editor do Apps Script, menu **Execuções** mostra quanto tempo cada chamada levou (`getHome`, `openShift`, `saveFuel`…).
 
+## Escala (aba ESCALA)
+
+Na planilha: menu **Frota Polaris → Montar escala deste mês** ou **Montar escala do próximo mês**. O app monta a grade do mês:
+- linha do título (`ESCALA MÊS DE DEZEMBRO 2026`), os **dias do mês** e o **dia da semana** (sábado e domingo destacados);
+- **uma linha por entregador ativo** da tela Equipe (o nome também tem lista, só com cadastrados);
+- em cada dia, uma **lista**: os turnos fixos (`08h-14h`, `12h-18h`, `18h-00h`) ou **F** (folga). Vazio = não escalado. Cada turno ganha uma cor e a folga fica cinza.
+
+Rodar o menu de novo **não apaga nada**: só acrescenta no fim do mês quem foi cadastrado depois. Os meses ficam um embaixo do outro.
+
+O app usa a escala para:
+- **Início → Escala de hoje:** quem trabalha hoje, em qual turno, quem **já saiu** e quem está **atrasado** (15 min depois do início do turno sem saída registrada);
+- **Saída rápida:** ao tocar na moto, sugere quem está escalado para o turno daquele horário e ainda não saiu (preferindo o vinculado à moto) e já marca o turno da escala; ao escolher outro entregador, o turno passa a ser o da escala dele;
+- **Painel:** faltas (escalado em dia passado sem turno lançado) e dias escalados no ranking.
+
+O formato antigo (`TR` nos dias) continua sendo lido, sem horário.
+
 ## Zerar o sistema (começar do zero)
 
 Na planilha: menu **Frota Polaris → Zerar o sistema…** (o menu aparece ao abrir a planilha). Pede duas confirmações e:
 - cria antes uma **cópia de segurança** da planilha no Drive ("BACKUP … — data hora");
 - apaga os dados de REGISTRO DIÁRIO, Frota, CAMISAS, ABASTECIMENTOS, RECEITAS, MANUTENÇÕES, ENTREGADORES e DOCUMENTOS (ficam cabeçalhos, fórmulas e formatação);
-- deixa a aba ESCALA com o modelo do mês atual;
+- deixa a aba ESCALA só com o cabeçalho do mês atual (depois de cadastrar a equipe, use **Montar escala deste mês**);
 - **não mexe** na aba Configurações nem em abas que o app não usa (e avisa quais são);
 - se você escolher, manda a pasta "Frota Polaris — Arquivos" para a lixeira do Drive (recuperável por 30 dias);
 - desliga a importação automática de entregadores: daí em diante o cadastro é só pela tela Equipe.
@@ -92,7 +108,7 @@ Não funciona pelo app, só pela planilha.
 1. **App → Mais → Motos → Nova moto:** identificação (ex.: MOTO 01), placa, modelo e **KM atual do painel**; última revisão (KM e data) se souber. O app mostra na hora quando será a próxima revisão. (Grava na aba Frota.)
 2. **Aba Configurações:** confira a meta de corridas por turno e o intervalo de revisão (km e meses).
 3. **App → Equipe → Novo:** cadastre cada entregador com salário (entra no lucro) e validade da CNH; envie os documentos.
-4. **Aba ESCALA:** a partir da linha 4, um entregador por linha (coluna A = nome) e `TR` nos dias de trabalho (`F` = folga). Para outro mês, copie o bloco de 3 linhas e troque o nome do mês.
+4. **Escala:** na planilha, menu **Frota Polaris → Montar escala deste mês** (depois de cadastrar os entregadores) e preencha os turnos (veja "Escala" abaixo).
 5. Na primeira saída de cada moto, digite o KM (depois o app sugere sozinho).
 
 ## Ajustes
