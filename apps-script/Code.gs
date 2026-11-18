@@ -404,6 +404,7 @@ function padronizar_(ss) {
     var v = conf.getRange(1, 1, conf.getLastRow(), 1).getValues();
     for (var i = v.length - 1; i >= 1; i--) if (plano.linhas.indexOf(String(v[i][0]).trim()) >= 0) conf.deleteRow(i + 1);
   }
+  garanteTurnosConfig_(ss); // linhas "Turno" (08h-14h…) na aba Configurações, se ainda não existirem
   return { formatadas: formataAbas_(ss), apagadas: plano.apagar, linhas: plano.linhas };
 }
 
