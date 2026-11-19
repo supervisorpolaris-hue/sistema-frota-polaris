@@ -18,7 +18,7 @@ const ultimoAviso = () => ui.log[ui.log.length - 1];
 
 // menu
 exec('onOpen');
-assert.deepStrictEqual(ui.menu.map(x => x[1]), ['escalaEsteMes', 'escalaProximoMes', 'padronizarPlanilha', 'zerarSistema']);
+assert.deepStrictEqual(ui.menu.map(x => x[1]), ['escalaEsteMes', 'escalaProximoMes', 'padronizarPlanilha', 'liberarPasta', 'zerarSistema']);
 ok('menu: Montar escala deste mês / do próximo mês / Padronizar abas / Zerar o sistema');
 
 // pelo app (sem planilha aberta) não faz nada

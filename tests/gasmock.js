@@ -19,6 +19,7 @@ function makeEnv(data, opts) {
   const db = clone(data); // { sheets: {name: {rows: [[...]], links: {"r,c": url}, formulas: {"r,c": f}, maxRows, maxCols, validation: {col: [list]}}}, props }
   let sheetIdSeq = 100;
   const ids = { folder: 0, file: 0 };
+  const quem = { usuario: opts.user || 'supervisor@exemplo.com', dono: opts.owner || opts.user || 'supervisor@exemplo.com', editores: ['dono@exemplo.com', 'supervisor@exemplo.com'] };
 
   function Sheet(name) {
     const S = db.sheets[name];
@@ -113,13 +114,13 @@ function makeEnv(data, opts) {
     deleteSheet(sh) { hit('Spreadsheet.deleteSheet'); delete db.sheets[sh.getName()]; },
     insertSheet(n) { hit('Spreadsheet.insertSheet'); db.sheets[n] = { rows: [], links: {}, formulas: {}, maxRows: 1000, maxCols: 26 }; return Sheet(n); },
     getSpreadsheetTimeZone() { hit('Spreadsheet.getSpreadsheetTimeZone'); return 'America/Sao_Paulo'; },
-    getOwner() { hit('Spreadsheet.getOwner'); return { getEmail: () => 'dono@exemplo.com' }; },
-    getEditors() { hit('Spreadsheet.getEditors'); return [{ getEmail: () => 'dono@exemplo.com' }, { getEmail: () => 'supervisor@exemplo.com' }]; }
+    getOwner() { hit('Spreadsheet.getOwner'); return { getEmail: () => quem.dono }; },
+    getEditors() { hit('Spreadsheet.getEditors'); return quem.editores.map(e => ({ getEmail: () => e })); }
   };
 
   const folders = {};
   function Folder(id, nameF, parent) {
-    const F = folders[id] = folders[id] || { id, name: nameF, parent, trashed: false, children: [], files: [] };
+    const F = folders[id] = folders[id] || { id, name: nameF, parent, trashed: false, children: [], files: [], owner: quem.usuario, editors: [] };
     return {
       getId() { return id; },
       getUrl() { return 'https://drive.google.com/drive/folders/' + id; },
@@ -131,19 +132,24 @@ function makeEnv(data, opts) {
         let i = 0;
         return { hasNext: () => i < list.length, next: () => Folder(list[i++]) };
       },
-      createFolder(n) { hit('Drive.createFolder'); const cid = 'FOLDER' + (++ids.folder); folders[cid] = { id: cid, name: n, parent: id, trashed: false, children: [], files: [] }; F.children.push(cid); return Folder(cid); },
+      createFolder(n) { hit('Drive.createFolder'); const cid = 'FOLDER' + (++ids.folder); folders[cid] = { id: cid, name: n, parent: id, trashed: false, children: [], files: [], owner: quem.usuario, editors: [] }; F.children.push(cid); return Folder(cid); },
+      getOwner() { hit('Drive.getOwner'); return { getEmail: () => F.owner }; },
+      getParents() { hit('Drive.getParents'); const l = F.parent && folders[F.parent] ? [F.parent] : []; let i = 0; return { hasNext: () => i < l.length, next: () => Folder(l[i++]) }; },
+      addEditor(e) { hit('Drive.addEditor'); if (F.editors.indexOf(e) < 0) F.editors.push(e); return this; },
       createFile(blob) {
         hit('Drive.createFile');
         const fid = 'FILE' + (++ids.file);
-        F.files.push({ id: fid, name: blob.name, size: blob.bytes.length });
-        db.files = db.files || []; db.files.push({ id: fid, name: blob.name, folder: F.name });
+        F.files.push({ id: fid, name: blob.name, size: blob.bytes.length, owner: quem.usuario });
+        db.files = db.files || []; db.files.push({ id: fid, name: blob.name, folder: F.name, folderId: id, owner: quem.usuario });
         return { setDescription() { hit('Drive.setDescription'); }, getUrl() { return 'https://drive.google.com/file/d/' + fid + '/view'; } };
       },
-      getEditors() { hit('Drive.getEditors'); return []; },
-      addEditors() { hit('Drive.addEditors'); }
+      getEditors() { hit('Drive.getEditors'); return F.editors.map(e => ({ getEmail: () => e })); },
+      addEditors(l) { hit('Drive.addEditors'); l.forEach(e => { if (F.editors.indexOf(e) < 0) F.editors.push(e); }); }
     };
   }
-  folders.ROOTDRIVE = { id: 'ROOTDRIVE', name: 'Meu Drive', parent: null, trashed: false, children: [], files: [] };
+  folders.ROOTDRIVE = { id: 'ROOTDRIVE', name: 'Meu Drive', parent: null, trashed: false, children: [], files: [], owner: quem.dono, editors: [] };
+  const temAcesso = fid => { for (let f = folders[fid]; f; f = f.parent ? folders[f.parent] : null) if (f.owner === quem.usuario || f.editors.indexOf(quem.usuario) >= 0) return true; return false; };
+  const raizDe = u => { const id = u === quem.dono ? 'ROOTDRIVE' : 'ROOT_' + u; if (!folders[id]) folders[id] = { id, name: 'Meu Drive', parent: null, trashed: false, children: [], files: [], owner: u, editors: [] }; return id; };
 
   const props = Object.assign({}, db.props || { SS_ID: 'SSID' });
   const ctx = {
@@ -167,11 +173,11 @@ function makeEnv(data, opts) {
     },
     PropertiesService: { getScriptProperties() { hit('PropertiesService.getScriptProperties'); return { getProperty(k) { hit('Properties.getProperty'); return props[k] == null ? null : props[k]; }, setProperty(k, v) { hit('Properties.setProperty'); props[k] = v; }, getKeys() { return Object.keys(props); }, deleteProperty(k) { hit('Properties.deleteProperty'); delete props[k]; } }; } },
     LockService: { getScriptLock() { return { tryLock() { return true; }, releaseLock() {} }; } },
-    Session: { getActiveUser() { hit('Session.getActiveUser'); return { getEmail: () => 'supervisor@exemplo.com' }; } },
+    Session: { getActiveUser() { hit('Session.getActiveUser'); return { getEmail: () => quem.usuario }; } },
     DriveApp: {
-      getFolderById(id) { hit('Drive.getFolderById'); if (!folders[id]) throw new Error('not found'); return Folder(id); },
-      getFileById() { hit('Drive.getFileById'); return { getParents() { let done = false; return { hasNext: () => !done, next: () => { done = true; return Folder('ROOTDRIVE'); } }; } }; },
-      getRootFolder() { hit('Drive.getRootFolder'); return Folder('ROOTDRIVE'); }
+      getFolderById(id) { hit('Drive.getFolderById'); if (!folders[id]) throw new Error('not found'); if (!temAcesso(id)) throw new Error('Access denied: DriveApp.'); return Folder(id); },
+      getFileById() { hit('Drive.getFileById'); const ve = temAcesso('ROOTDRIVE'); return { getParents() { let done = !ve; return { hasNext: () => !done, next: () => { done = true; return Folder('ROOTDRIVE'); } }; } }; },
+      getRootFolder() { hit('Drive.getRootFolder'); return Folder(raizDe(quem.usuario)); }
     },
     Utilities: {
       formatDate(d, tz, fmt) {
@@ -190,7 +196,7 @@ function makeEnv(data, opts) {
   class FDate extends Date { constructor(...a) { if (a.length === 0) super(FIXED); else super(...a); } static now() { return FIXED; } }
   ctx.Date = FDate;
   vm.createContext(ctx);
-  return { ctx, calls, db, props, folders, resetCalls() { for (const k of Object.keys(calls)) delete calls[k]; } };
+  return { ctx, calls, db, props, folders, quem, setUser(u) { quem.usuario = u; }, temAcesso, resetCalls() { for (const k of Object.keys(calls)) delete calls[k]; } };
 }
 
 function load(env, file) { vm.runInContext(fs.readFileSync(file, 'utf8'), env.ctx, { filename: file }); return env.ctx; }

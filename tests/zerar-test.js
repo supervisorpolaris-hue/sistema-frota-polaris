@@ -20,7 +20,7 @@ exec('openShift', { data: '2026-11-17', moto: 'MOTO 02', entregador: 'Bruno Lima
 const antes = exec('getHome', '7');
 assert(antes.app.motos.length === 6 && antes.app.entregadores.length > 5);
 const rootAntigo = env.props.ROOT_FOLDER_ID;
-assert(rootAntigo && Object.keys(env.props).some(k => k.startsWith('FOTOS_')));
+assert(rootAntigo && Object.keys(env.props).some(k => k.startsWith('PASTA_MES_')));
 const confAntes = JSON.stringify(env.db.sheets['Configurações']);
 const regFormulasAntes = Object.keys(env.db.sheets['REGISTRO DIÁRIO'].formulas).length;
 
@@ -59,7 +59,7 @@ assert.strictEqual(esc[2][17], dow);
 ok('escala com modelo de novembro/2026 (17/11 = ' + dow + ')');
 assert(env.folders[rootAntigo].trashed, 'pasta antiga na lixeira');
 assert(env.props.ROOT_FOLDER_ID && env.props.ROOT_FOLDER_ID !== rootAntigo, 'pasta nova');
-assert(!Object.keys(env.props).some(k => k.startsWith('FOTOS_')));
+assert(!Object.keys(env.props).some(k => k.startsWith('PASTA_MES_')));
 assert.strictEqual(env.props.SEM_IMPORTACAO, '1');
 ok('pasta antiga de fotos/documentos na lixeira; pasta nova criada');
 console.log('  mensagem final:', ui.log[ui.log.length - 1].replace(/\n+/g, ' | '));

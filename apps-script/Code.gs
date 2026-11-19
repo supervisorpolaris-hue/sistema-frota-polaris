@@ -95,6 +95,7 @@ function include(name) {
 function configurar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) throw new Error('Abra o editor pela planilha (Extensões → Apps Script) e rode de novo.');
+  if (!souDono_(ss)) throw new Error('Rode com a conta dona da planilha (' + emailDono_(ss) + ').');
   PropertiesService.getScriptProperties().setProperty(PROP_SS, ss.getId());
   ['ABAST', 'REC', 'MANUT', 'ENT', 'DOCS'].forEach(function (k) { table_(ss, k); });
   garanteTurnosConfig_(ss);
@@ -115,6 +116,7 @@ function configurar() {
 function compartilharPasta() {
   var ss = ss_();
   var root = rootFolder_(ss);
+  if (!root) throw new Error('Só a conta dona da planilha (' + emailDono_(ss) + ') pode liberar a pasta de fotos.');
   var owner = (ss.getOwner() && ss.getOwner().getEmail()) || '';
   var atuais = root.getEditors().map(function (u) { return u.getEmail(); });
   var novos = ss.getEditors().map(function (u) { return u.getEmail(); }).filter(function (e) {
@@ -133,9 +135,28 @@ function onOpen() {
     .addItem('Montar escala do próximo mês', 'escalaProximoMes')
     .addSeparator()
     .addItem('Padronizar abas da planilha…', 'padronizarPlanilha')
+    .addItem('Liberar pasta de fotos para a equipe', 'liberarPasta')
     .addSeparator()
     .addItem('Zerar o sistema…', 'zerarSistema')
     .addToUi();
+}
+
+/** Menu: dá acesso à pasta de fotos e documentos para todos os editores da planilha (só a conta dona). */
+function liberarPasta() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!donoOuAvisa_(ui, ss)) return;
+  var com = compartilharPasta();
+  PropertiesService.getScriptProperties().setProperty('PASTA_SYNC', String(Date.now()));
+  ui.alert('Pasta de fotos liberada', 'Têm acesso à pasta "' + ROOT_FOLDER_NAME + '": ' + (com.length ? com.join(', ') : '(só você)') +
+    '.\n\nQuem você adicionar depois como editor da planilha ganha acesso sozinho quando você abrir o app (ou use este menu de novo).', ui.ButtonSet.OK);
+}
+
+/** Opções de manutenção só para a conta dona da planilha. */
+function donoOuAvisa_(ui, ss) {
+  if (souDono_(ss)) return true;
+  ui.alert('Só a conta dona', 'Esta opção só pode ser usada pela conta dona da planilha (' + emailDono_(ss) + '). Você está como ' + (userEmail_() || '?') + '.', ui.ButtonSet.OK);
+  return false;
 }
 
 /** Abas com dados que o "Zerar" apaga (a aba Configurações fica: meta de corridas e intervalo de revisão). */
@@ -150,6 +171,7 @@ var PROP_SEM_IMPORTACAO = 'SEM_IMPORTACAO';
 function zerarSistema() {
   var ui = SpreadsheetApp.getUi(); // fora da planilha (ex.: pelo app) isso falha e nada é apagado
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!donoOuAvisa_(ui, ss)) return;
   var r = ui.alert('Zerar o sistema',
     'Isto APAGA todos os dados desta planilha: turnos, abastecimentos, receitas, manutenções, motos, entregadores, ' +
     'documentos, camisas e escala.\n\nFicam: cabeçalhos, fórmulas e a aba Configurações (meta e revisão).\n\n' +
@@ -192,7 +214,8 @@ function zerar_(ss, mandarParaLixeira) {
   if (mandarParaLixeira) {
     var id = props.getProperty(PROP_ROOT);
     if (id) { try { DriveApp.getFolderById(id).setTrashed(true); foiLixeira = true; } catch (e) { /* já não existe */ } }
-    props.getKeys().forEach(function (k) { if (k === PROP_ROOT || k.indexOf('FOTOS_') === 0) props.deleteProperty(k); });
+    props.getKeys().forEach(function (k) { if (k === PROP_ROOT || k.indexOf('FOTOS_') === 0 || k.indexOf('PASTA_') === 0) props.deleteProperty(k); });
+    __root = undefined; __pastasFotos = {}; // a pasta oficial vai ser recriada logo abaixo
   }
   // Cadastro de entregadores passa a ser só manual (sem importar nomes da Frota/escala automaticamente).
   props.setProperty(PROP_SEM_IMPORTACAO, '1');
@@ -370,6 +393,7 @@ var COR_SISTEMA = '#fd4502';
 function padronizarPlanilha() {
   var ui = SpreadsheetApp.getUi(); // fora da planilha (pelo app) isso falha e nada é feito
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!donoOuAvisa_(ui, ss)) return;
   var plano = planoPadronizar_(ss);
   var msg = 'Deixa o cabeçalho de todas as abas do sistema no padrão laranja (1ª linha fixa).';
   if (plano.apagar.length) msg += '\n\nAPAGA as abas que o sistema não usa: ' + plano.apagar.join(', ') + '. (O Painel antigo só repetia, desatualizado, o que o Início do app já mostra.)';
@@ -405,6 +429,7 @@ function padronizar_(ss) {
     for (var i = v.length - 1; i >= 1; i--) if (plano.linhas.indexOf(String(v[i][0]).trim()) >= 0) conf.deleteRow(i + 1);
   }
   garanteTurnosConfig_(ss); // linhas "Turno" (08h-14h…) na aba Configurações, se ainda não existirem
+  try { compartilharPasta(); } catch (e) { /* segue: a padronização das abas não depende da pasta */ }
   return { formatadas: formataAbas_(ss), apagadas: plano.apagar, linhas: plano.linhas };
 }
 
@@ -450,6 +475,7 @@ function testeSistema() {
  */
 function getHome(period) {
   var c = ctx_();
+  sincronizaPasta_(c.ss); // dono abriu o app: quem entrou na planilha ganha acesso à pasta de fotos
   return { app: app_(c), dash: dash_(c, period) };
 }
 
@@ -1289,9 +1315,14 @@ function matchDriver_(nome, drivers) {
 }
 
 function driverFolder_(c, t, d) {
+  var root = rootFolder_(c.ss);
+  if (!root) return pastaPendente_(c.ss); // sem acesso à pasta oficial: plano B (não grava o link da pasta)
+  var base = pastaFilha_(root, 'Documentos dos entregadores', 'PASTA_DOCS_' + c.ss.getId());
   var m = String(d.pasta || '').match(/folders\/([\w-]+)/);
-  if (m) { try { return DriveApp.getFolderById(m[1]); } catch (e) { /* recria */ } }
-  var base = subFolder_(rootFolder_(c.ss), 'Documentos dos entregadores');
+  if (m) {
+    try { var atual = DriveApp.getFolderById(m[1]), it = atual.getParents(); while (it.hasNext()) if (it.next().getId() === base.getId()) return atual; }
+    catch (e) { /* sem acesso, apagada ou fora da pasta oficial: usa a da pasta oficial */ }
+  }
   var f = subFolder_(base, d.nome + ' (' + d.id + ')');
   writeObj_(t, d._row, { pasta: f.getUrl() });
   return f;
@@ -1917,16 +1948,84 @@ function append_(t, obj) {
 
 /* ============================== ARQUIVOS NO DRIVE ============================== */
 
+/*
+ * Regras da pasta de arquivos (fotos e documentos):
+ * - A pasta oficial fica no Drive do DONO da planilha. Só a conta dona cria ou troca a pasta oficial.
+ *   (Antes, quem não tinha acesso à pasta acabava criando uma pasta no próprio Drive e o app passava a usar
+ *   essa pasta para todo mundo — as fotos ficavam espalhadas e o dono sem acesso.)
+ * - Quem ainda não tem acesso à pasta oficial salva num "plano B": uma pasta no próprio Drive, já compartilhada
+ *   com o dono, e recebe um aviso. O acesso é liberado sozinho quando o dono abre o app (ou pelo menu).
+ */
+var __dono = null, __root = undefined, __avisoPasta = false;
+
+/** E-mail do dono da planilha ('' se o Google não informar). */
+function emailDono_(ss) {
+  if (__dono === null) { try { var o = ss.getOwner(); __dono = (o && o.getEmail()) || ''; } catch (e) { __dono = ''; } }
+  return __dono;
+}
+function souDono_(ss) { var d = emailDono_(ss); return !d || d === userEmail_(); }
+
+/** A pasta oficial tem que ser do dono da planilha (pasta criada no Drive de outra pessoa não vale). */
+function pastaDoDono_(f, ss) {
+  var d = emailDono_(ss);
+  if (!d) return true;
+  try { var o = f.getOwner(), e = o && o.getEmail(); return !e || e === d; } catch (x) { return true; }
+}
+
+/** Pasta oficial, ou null se esta conta não tem acesso a ela (e não é a dona). */
 function rootFolder_(ss) {
+  if (__root !== undefined) return __root;
   var props = PropertiesService.getScriptProperties();
   var id = props.getProperty(PROP_ROOT);
-  if (id) { try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (e) { /* recria */ } }
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed() && pastaDoDono_(f, ss)) return (__root = f); } catch (e) { /* sem acesso ou apagada */ }
+  }
+  if (!souDono_(ss)) return (__root = null); // nunca cria nem troca a pasta oficial fora da conta dona
   var parent;
   try { var ps = DriveApp.getFileById(ss.getId()).getParents(); parent = ps.hasNext() ? ps.next() : DriveApp.getRootFolder(); }
   catch (e) { parent = DriveApp.getRootFolder(); }
   var folder = subFolder_(parent, ROOT_FOLDER_NAME);
   props.setProperty(PROP_ROOT, folder.getId());
-  return folder;
+  return (__root = folder);
+}
+
+/** Plano B para quem ainda não tem acesso à pasta oficial: pasta no próprio Drive, compartilhada com o dono. */
+function pastaPendente_(ss) {
+  __avisoPasta = true;
+  var pasta = subFolder_(DriveApp.getRootFolder(), 'Frota Polaris — arquivos aguardando liberação');
+  var d = emailDono_(ss);
+  if (d && d !== userEmail_()) {
+    try { if (!pasta.getEditors().some(function (u) { return u.getEmail() === d; })) pasta.addEditor(d); } catch (e) { /* segue: a foto foi salva */ }
+  }
+  return pasta;
+}
+
+/** Subpasta guardada pelo ID, mas só se ainda estiver dentro da pasta-mãe certa. */
+function pastaFilha_(pai, nome, chave) {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty(chave);
+  if (id) {
+    try {
+      var f = DriveApp.getFolderById(id);
+      if (!f.isTrashed()) { var it = f.getParents(); while (it.hasNext()) if (it.next().getId() === pai.getId()) return f; }
+    } catch (e) { /* sem acesso, apagada ou fora do lugar */ }
+  }
+  var nova = subFolder_(pai, nome);
+  props.setProperty(chave, nova.getId());
+  return nova;
+}
+
+/** Quando o dono abre o app: dá acesso à pasta para quem entrou na planilha (no máximo a cada 30 min). */
+function sincronizaPasta_(ss) {
+  try {
+    if (!emailDono_(ss) || !souDono_(ss)) return;
+    rootFolder_(ss); // dono: confere (e conserta, se preciso) qual é a pasta oficial
+    var props = PropertiesService.getScriptProperties(), agora = Date.now();
+    var ultima = +(props.getProperty('PASTA_SYNC') || 0);
+    if (agora - ultima < 30 * 60 * 1000) return;
+    props.setProperty('PASTA_SYNC', String(agora));
+    compartilharPasta();
+  } catch (e) { /* não atrapalha a abertura do app */ }
 }
 
 function folderUrlSafe_(ss) {
@@ -1940,28 +2039,23 @@ function subFolder_(parent, name) {
 }
 
 /**
- * Pasta Fotos/aaaa-mm. O ID fica guardado nas propriedades do script (por planilha e mês):
- * evita procurar pasta por nome no Drive a cada foto, que é lento.
+ * Pasta Fotos/aaaa-mm dentro da pasta oficial (null se esta conta ainda não tem acesso a ela).
+ * Os IDs ficam guardados (evita procurar por nome a cada foto) e são conferidos pela pasta-mãe.
  */
 var __pastasFotos = {};
 function photoFolder_(ss, mes) {
-  if (__pastasFotos[mes]) return __pastasFotos[mes];
-  var props = PropertiesService.getScriptProperties();
-  var chave = 'FOTOS_' + ss.getId() + '_' + mes;
-  var id = props.getProperty(chave);
-  if (id) {
-    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return (__pastasFotos[mes] = f); } catch (e) { /* recria */ }
-  }
-  var folder = subFolder_(subFolder_(rootFolder_(ss), 'Fotos'), mes);
-  props.setProperty(chave, folder.getId());
-  return (__pastasFotos[mes] = folder);
+  if (__pastasFotos[mes] !== undefined) return __pastasFotos[mes];
+  var root = rootFolder_(ss);
+  if (!root) return (__pastasFotos[mes] = null);
+  var fotos = pastaFilha_(root, 'Fotos', 'PASTA_FOTOS_' + ss.getId());
+  return (__pastasFotos[mes] = pastaFilha_(fotos, mes, 'PASTA_MES_' + ss.getId() + '_' + mes));
 }
 
-/** Foto de painel/cupom/nota → pasta Fotos/aaaa-mm. */
+/** Foto de painel/cupom/nota → pasta Fotos/aaaa-mm (ou o plano B, se a pasta ainda não foi liberada). */
 function savePhoto_(ss, foto, data, nomeBase) {
   var tz = ss.getSpreadsheetTimeZone();
   var dia = Utilities.formatDate(data, tz, 'yyyy-MM-dd');
-  var folder = photoFolder_(ss, dia.slice(0, 7));
+  var folder = photoFolder_(ss, dia.slice(0, 7)) || pastaPendente_(ss);
   var nome = dia + '_' + Utilities.formatDate(new Date(), tz, 'HHmm') + '_' + nomeBase + '.' + extFromMime_(foto && foto.mime);
   return saveFile_(foto, folder, nome, ['image/jpeg', 'image/png', 'image/webp']);
 }
@@ -1985,7 +2079,12 @@ function extFromMime_(mime) {
 function withLock_(fn) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error('Outra pessoa está salvando agora. Tente de novo em alguns segundos.');
-  try { return fn(); } finally { lock.releaseLock(); }
+  try {
+    var res = fn();
+    // Foto/documento foi para o plano B: avisa quem lançou.
+    if (__avisoPasta && res && res.msg) res.msg += ' ⚠️ Sua conta ainda não tem acesso à pasta de fotos: o arquivo ficou no seu Drive, já compartilhado com o dono da planilha. Peça ao dono para abrir o app (libera sozinho) ou usar Frota Polaris → Liberar pasta de fotos.';
+    return res;
+  } finally { lock.releaseLock(); }
 }
 
 function userEmail_() {

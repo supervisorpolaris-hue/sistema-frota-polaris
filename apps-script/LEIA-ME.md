@@ -92,6 +92,13 @@ O app usa a escala para:
 
 O formato antigo (`TR` nos dias) continua sendo lido, sem horário.
 
+## Pasta de fotos e documentos (quem pode ver)
+
+- A pasta **"Frota Polaris — Arquivos"** fica no Drive do **dono da planilha**. Só a conta dona cria ou troca essa pasta.
+- Cada pessoa que lança pelo app precisa ter acesso a ela. Isso é feito **sozinho**: quando o dono abre o app, todos os editores da planilha ganham acesso (no máximo a cada 30 min). Na hora: menu **Frota Polaris → Liberar pasta de fotos para a equipe** (só o dono).
+- Se alguém lançar antes de ter acesso, a saída é gravada normalmente, a foto vai para a pasta **"Frota Polaris — arquivos aguardando liberação"** no Drive da própria pessoa, **já compartilhada com o dono**, e aparece um aviso na tela.
+- Menus de manutenção (Padronizar abas, Liberar pasta, Zerar, configurar) só funcionam na conta dona.
+
 ## Padronizar abas
 
 Na planilha: menu **Frota Polaris → Padronizar abas da planilha…**. Mostra o que vai fazer e pede confirmação:
