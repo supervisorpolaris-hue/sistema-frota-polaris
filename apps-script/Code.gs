@@ -95,8 +95,11 @@ function include(name) {
 function configurar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) throw new Error('Abra o editor pela planilha (Extensões → Apps Script) e rode de novo.');
+  if (!souDono_(ss)) throw new Error('Rode com a conta dona da planilha (' + emailDono_(ss) + ').');
   PropertiesService.getScriptProperties().setProperty(PROP_SS, ss.getId());
   ['ABAST', 'REC', 'MANUT', 'ENT', 'DOCS'].forEach(function (k) { table_(ss, k); });
+  garanteTurnosConfig_(ss);
+  formataAbas_(ss);
   var c = ctx_();
   var drivers = drivers_(c);
   var root = rootFolder_(ss);
@@ -113,6 +116,7 @@ function configurar() {
 function compartilharPasta() {
   var ss = ss_();
   var root = rootFolder_(ss);
+  if (!root) throw new Error('Só a conta dona da planilha (' + emailDono_(ss) + ') pode liberar a pasta de fotos.');
   var owner = (ss.getOwner() && ss.getOwner().getEmail()) || '';
   var atuais = root.getEditors().map(function (u) { return u.getEmail(); });
   var novos = ss.getEditors().map(function (u) { return u.getEmail(); }).filter(function (e) {
@@ -120,6 +124,335 @@ function compartilharPasta() {
   });
   if (novos.length) root.addEditors(novos);
   return atuais.concat(novos).filter(function (e) { return e !== owner; });
+}
+
+/* ============================== ZERAR (menu da planilha) ============================== */
+
+/** Menu "Frota Polaris" na planilha. */
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('Frota Polaris')
+    .addItem('Montar escala deste mês', 'escalaEsteMes')
+    .addItem('Montar escala do próximo mês', 'escalaProximoMes')
+    .addSeparator()
+    .addItem('Padronizar abas da planilha…', 'padronizarPlanilha')
+    .addItem('Liberar pasta de fotos para a equipe', 'liberarPasta')
+    .addSeparator()
+    .addItem('Zerar o sistema…', 'zerarSistema')
+    .addToUi();
+}
+
+/** Menu: dá acesso à pasta de fotos e documentos para todos os editores da planilha (só a conta dona). */
+function liberarPasta() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!donoOuAvisa_(ui, ss)) return;
+  var com = compartilharPasta();
+  PropertiesService.getScriptProperties().setProperty('PASTA_SYNC', String(Date.now()));
+  ui.alert('Pasta de fotos liberada', 'Têm acesso à pasta "' + ROOT_FOLDER_NAME + '": ' + (com.length ? com.join(', ') : '(só você)') +
+    '.\n\nQuem você adicionar depois como editor da planilha ganha acesso sozinho quando você abrir o app (ou use este menu de novo).', ui.ButtonSet.OK);
+}
+
+/** Opções de manutenção só para a conta dona da planilha. */
+function donoOuAvisa_(ui, ss) {
+  if (souDono_(ss)) return true;
+  ui.alert('Só a conta dona', 'Esta opção só pode ser usada pela conta dona da planilha (' + emailDono_(ss) + '). Você está como ' + (userEmail_() || '?') + '.', ui.ButtonSet.OK);
+  return false;
+}
+
+/** Abas com dados que o "Zerar" apaga (a aba Configurações fica: meta de corridas e intervalo de revisão). */
+var ZERAR_ABAS = ['REG', 'FROTA', 'CAMISAS', 'ABAST', 'REC', 'MANUT', 'ENT', 'DOCS'];
+var PROP_SEM_IMPORTACAO = 'SEM_IMPORTACAO';
+
+/**
+ * Apaga todos os dados para começar do zero, com cópia de segurança antes.
+ * Só roda pelo menu da planilha (Frota Polaris → Zerar o sistema…), com duas confirmações.
+ * Mantém: cabeçalhos, fórmulas, formatação, validações e a aba Configurações.
+ */
+function zerarSistema() {
+  var ui = SpreadsheetApp.getUi(); // fora da planilha (ex.: pelo app) isso falha e nada é apagado
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!donoOuAvisa_(ui, ss)) return;
+  var r = ui.alert('Zerar o sistema',
+    'Isto APAGA todos os dados desta planilha: turnos, abastecimentos, receitas, manutenções, motos, entregadores, ' +
+    'documentos, camisas e escala.\n\nFicam: cabeçalhos, fórmulas e a aba Configurações (meta e revisão).\n\n' +
+    'Antes de apagar, uma cópia de segurança da planilha é criada no seu Drive.\n\nContinuar?', ui.ButtonSet.YES_NO);
+  if (r !== ui.Button.YES) return;
+  var lixeira = ui.alert('Fotos e documentos no Drive',
+    'Mandar também para a lixeira a pasta "' + ROOT_FOLDER_NAME + '" (fotos de KM, cupons, notas, CNH, RG/CPF…)?\n\n' +
+    'SIM: vai para a lixeira do Drive (dá para restaurar por 30 dias).\nNÃO: os arquivos ficam no Drive, mas o app deixa de mostrá-los.',
+    ui.ButtonSet.YES_NO_CANCEL);
+  if (lixeira !== ui.Button.YES && lixeira !== ui.Button.NO) return;
+
+  var res = withLock_(function () { return zerar_(ss, lixeira === ui.Button.YES); });
+  ui.alert('Sistema zerado',
+    'Cópia de segurança: "' + res.backup + '" (no seu Drive).\n\n' +
+    'Apagado: ' + res.limpas.join(', ') + '.\n' + (res.lixeira ? 'Pasta de fotos e documentos enviada para a lixeira.\n' : '') +
+    (res.outras.length ? 'Abas que NÃO foram mexidas: ' + res.outras.join(', ') + '.\n' : '') +
+    '\nPróximo passo: no app, Mais → Motos → Nova moto (com o KM atual do painel de cada uma).', ui.ButtonSet.OK);
+}
+
+function zerar_(ss, mandarParaLixeira) {
+  var tz = ss.getSpreadsheetTimeZone();
+  var agora = new Date();
+  var backup = ss.copy('BACKUP ' + ss.getName() + ' — ' + Utilities.formatDate(agora, tz, 'dd-MM-yyyy HH') + 'h' + Utilities.formatDate(agora, tz, 'mm'));
+  var limpas = [];
+  ZERAR_ABAS.forEach(function (k) {
+    var sh = ss.getSheetByName(SHEET[k]);
+    if (sh && limparDados_(sh)) limpas.push(SHEET[k]);
+  });
+  var esc = ss.getSheetByName(SHEET.ESCALA);
+  if (esc) {
+    esc.clear();
+    esc.getRange(1, 1, esc.getMaxRows(), esc.getMaxColumns()).clearDataValidations();
+    var hk = dateKey_(new Date(), tz);
+    montarEscala_(ss, +hk.slice(0, 4), +hk.slice(5, 7));
+    limpas.push(SHEET.ESCALA);
+  }
+
+  var props = PropertiesService.getScriptProperties();
+  var foiLixeira = false;
+  if (mandarParaLixeira) {
+    var id = props.getProperty(PROP_ROOT);
+    if (id) { try { DriveApp.getFolderById(id).setTrashed(true); foiLixeira = true; } catch (e) { /* já não existe */ } }
+    props.getKeys().forEach(function (k) { if (k === PROP_ROOT || k.indexOf('FOTOS_') === 0 || k.indexOf('PASTA_') === 0) props.deleteProperty(k); });
+    __root = undefined; __pastasFotos = {}; // a pasta oficial vai ser recriada logo abaixo
+  }
+  // Cadastro de entregadores passa a ser só manual (sem importar nomes da Frota/escala automaticamente).
+  props.setProperty(PROP_SEM_IMPORTACAO, '1');
+  props.setProperty(PROP_SS, ss.getId());
+  garanteTurnosConfig_(ss);
+  SpreadsheetApp.flush();
+  // Recria as pastas (se foram para a lixeira) e dá acesso aos editores da planilha.
+  var root = rootFolder_(ss);
+  subFolder_(root, 'Fotos');
+  subFolder_(root, 'Documentos dos entregadores');
+  compartilharPasta();
+
+  var conhecidas = Object.keys(SHEET).map(function (k) { return SHEET[k]; });
+  var outras = ss.getSheets().map(function (s) { return s.getName(); }).filter(function (n) { return conhecidas.indexOf(n) < 0; });
+  return { backup: backup.getName(), limpas: limpas, lixeira: foiLixeira, outras: outras };
+}
+
+/** Apaga os valores da linha 2 em diante. Cabeçalho, fórmulas, formatação e validações ficam. */
+function limparDados_(sh) {
+  var lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) return false;
+  var rg = sh.getRange(2, 1, lastRow - 1, lastCol);
+  var f = rg.getFormulas();
+  rg.clearContent();
+  if (f.some(function (row) { return row.some(function (x) { return x !== ''; }); })) rg.setFormulas(f);
+  return true;
+}
+
+/* ============================== ESCALA (aba montada pelo menu) ============================== */
+
+var SEMANA = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
+var ESCALA_COLS = 1 + 31; // nome + 31 dias (todos os meses alinhados)
+var CORES_TURNO = ['#ffe3d3', '#fff1bf', '#d9e8ff', '#dff3dc', '#f1e0ff'];
+
+/** Menu: Frota Polaris → Montar escala deste mês / do próximo mês. */
+function escalaEsteMes() { escalaMenu_(0); }
+function escalaProximoMes() { escalaMenu_(1); }
+
+function escalaMenu_(desloc) {
+  var ui = SpreadsheetApp.getUi(); // fora da planilha (pelo app) isso falha e nada é feito
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hoje = dateKey_(new Date(), ss.getSpreadsheetTimeZone());
+  var ano = +hoje.slice(0, 4), mes = +hoje.slice(5, 7) + desloc;
+  if (mes > 12) { mes -= 12; ano++; }
+  var r = withLock_(function () { return montarEscala_(ss, ano, mes); });
+  ui.alert('Escala de ' + r.mes,
+    (r.criada ? 'Grade criada na aba ESCALA' + (r.incluidos.length ? ' com ' + r.incluidos.length + ' entregador(es).' : ', ainda sem entregadores (cadastre na tela Equipe e rode de novo).')
+      : 'A grade deste mês já existia. ' + (r.incluidos.length ? 'Incluídos: ' + r.incluidos.join(', ') + '.' : 'Nenhum entregador novo para incluir.')) +
+    '\n\nEm cada dia, escolha na lista o turno (' + r.turnos.join(', ') + ') ou F para folga. Deixe vazio quem não estiver escalado.' +
+    '\nPara incluir alguém depois: cadastre na tela Equipe e use este menu de novo (o que já foi preenchido não é apagado).', ui.ButtonSet.OK);
+}
+
+function nomeMes_(m) {
+  var k = Object.keys(MESES).filter(function (x) { return MESES[x] === m; })[0];
+  return k === 'marco' ? 'MARÇO' : k.toUpperCase();
+}
+
+/**
+ * Cria ou completa o bloco do mês na aba ESCALA, no formato que o app lê:
+ *   ESCALA MÊS DE <MÊS> <ANO> / DIAS DO MÊS (1..N) / DIA DA SEMANA / uma linha por entregador ativo.
+ * Cada dia tem lista com os turnos fixos e F (folga); o nome vem da lista de cadastrados.
+ * Se o mês já existe, só acrescenta quem falta: nada do que foi preenchido é apagado.
+ */
+function montarEscala_(ss, ano, mes) {
+  var turnos = readConfig_(ss).turnos.map(function (t) { return t.nome; });
+  var tEnt = table_(ss, 'ENT');
+  var ativos = rows_(tEnt).filter(function (d) { return String(d.nome || '').trim() && String(d.id || '').trim() && ativo_(d); })
+    .map(function (d) { return String(d.nome).trim().replace(/\s+/g, ' '); })
+    .sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+  var sh = ss.getSheetByName(SHEET.ESCALA) || ss.insertSheet(SHEET.ESCALA);
+  if (sh.getMaxColumns() < ESCALA_COLS) sh.insertColumnsAfter(sh.getMaxColumns(), ESCALA_COLS - sh.getMaxColumns());
+  var dias = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  var titulo = 'ESCALA MÊS DE ' + nomeMes_(mes) + ' ' + ano;
+  var bloco = acharBlocoEscala_(sh, titulo);
+  var incluidos = [];
+
+  if (!bloco) {
+    var last = sh.getLastRow(), ini = last ? last + 2 : 1, nLin = 3 + ativos.length;
+    if (sh.getMaxRows() < ini + nLin) sh.insertRowsAfter(sh.getMaxRows(), ini + nLin - sh.getMaxRows());
+    var tit = [titulo], lDias = ['DIAS DO MÊS'], lSem = ['DIA DA SEMANA'];
+    for (var d = 1; d <= 31; d++) {
+      tit.push('');
+      lDias.push(d <= dias ? d : '');
+      lSem.push(d <= dias ? SEMANA[new Date(Date.UTC(ano, mes - 1, d)).getUTCDay()] : '');
+    }
+    var linhas = [tit, lDias, lSem].concat(ativos.map(function (n) { var r = [n]; for (var j = 0; j < 31; j++) r.push(''); return r; }));
+    sh.getRange(ini, 1, nLin, ESCALA_COLS).setValues(linhas);
+    formataCabecalhoEscala_(sh, ini, dias, ano, mes);
+    if (ativos.length) validaLinhasEscala_(ss, sh, ini + 3, ativos.length, dias, turnos);
+    incluidos = ativos.slice();
+  } else {
+    // Já está no mês se o nome bate (inclusive só o primeiro nome, como "RAFAEL" = "Rafael Mailson").
+    ativos.filter(function (n) { return !bloco.nomes.some(function (x) { return sameName_(x, n); }); }).forEach(function (n) {
+      sh.insertRowsAfter(bloco.ultima, 1);
+      bloco.ultima++;
+      var r = [n];
+      for (var j = 0; j < 31; j++) r.push('');
+      sh.getRange(bloco.ultima, 1, 1, ESCALA_COLS).setValues([r]);
+      validaLinhasEscala_(ss, sh, bloco.ultima, 1, bloco.dias, turnos);
+      incluidos.push(n);
+    });
+  }
+  sh.setFrozenColumns(1);
+  sh.setColumnWidth(1, 200);
+  sh.setColumnWidths(2, 31, 66);
+  coresEscala_(sh, turnos);
+  SpreadsheetApp.flush();
+  return { mes: nomeMes_(mes).toLowerCase() + '/' + ano, criada: !bloco, incluidos: incluidos, turnos: turnos.concat(['F']) };
+}
+
+/** Localiza o bloco do mês: linha do título, quantos dias e os nomes já listados (até o próximo título). */
+function acharBlocoEscala_(sh, titulo) {
+  var last = sh.getLastRow();
+  if (!last) return null;
+  var v = sh.getRange(1, 1, last, ESCALA_COLS).getValues();
+  var alvo = norm_(titulo), t = -1;
+  for (var i = 0; i < v.length; i++) if (norm_(v[i][0]) === alvo) { t = i; break; }
+  if (t < 0) return null;
+  var dias = 0;
+  if (v[t + 1]) v[t + 1].forEach(function (x, j) { if (j && toNumber_(x)) dias = Math.max(dias, toNumber_(x)); });
+  var nomes = [], ultima = t + 3; // linha (1-based) do DIA DA SEMANA
+  for (var k = t + 3; k < v.length; k++) {
+    var a = norm_(v[k][0]);
+    if (/^escala\s+(do\s+)?mes\s+de/.test(a)) break;
+    if (a) { nomes.push(String(v[k][0]).trim()); ultima = k + 1; }
+  }
+  return { linha: t + 1, dias: dias || 31, nomes: nomes, ultima: ultima };
+}
+
+/** Listas: nome (dos cadastrados na tela Equipe) e, em cada dia, turno fixo ou F. */
+function validaLinhasEscala_(ss, sh, linha, n, dias, turnos) {
+  var tEnt = table_(ss, 'ENT');
+  var colNome = tEnt.idx.nome + 1;
+  var listaNomes = tEnt.sheet.getRange(2, colNome, Math.max(tEnt.sheet.getMaxRows() - 1, 1), 1);
+  sh.getRange(linha, 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()
+    .requireValueInRange(listaNomes, true).setAllowInvalid(false)
+    .setHelpText('Escolha um entregador cadastrado na tela Equipe do app.').build());
+  sh.getRange(linha, 2, n, dias).setDataValidation(SpreadsheetApp.newDataValidation()
+    .requireValueInList(turnos.concat(['F']), true).setAllowInvalid(false)
+    .setHelpText('Turno do dia (' + turnos.join(', ') + ') ou F para folga. Vazio = não escalado.').build());
+}
+
+function formataCabecalhoEscala_(sh, ini, dias, ano, mes) {
+  sh.getRange(ini, 1, 1, ESCALA_COLS).setBackground('#fd4502').setFontColor('#ffffff').setFontWeight('bold');
+  sh.getRange(ini + 1, 1, 2, ESCALA_COLS).setBackground('#fff1e8').setFontWeight('bold');
+  for (var d = 1; d <= dias; d++) {
+    var dow = new Date(Date.UTC(ano, mes - 1, d)).getUTCDay();
+    if (dow === 0 || dow === 6) sh.getRange(ini + 1, 1 + d, 2, 1).setBackground('#ffd2b8');
+  }
+}
+
+/** Cores automáticas: cada turno uma cor, F (folga) cinza. Vale para a aba inteira. */
+function coresEscala_(sh, turnos) {
+  var area = [sh.getRange(1, 2, sh.getMaxRows(), 31)];
+  var regras = [SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('F').setBackground('#e6e6e6').setFontColor('#777777').setRanges(area).build()];
+  turnos.forEach(function (t, i) {
+    regras.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(t).setBackground(CORES_TURNO[i % CORES_TURNO.length]).setRanges(area).build());
+  });
+  sh.setConditionalFormatRules(regras);
+}
+
+/* ============================== PADRONIZAR ABAS (menu da planilha) ============================== */
+
+// Abas da planilha manual antiga que o sistema não usa mais (o app tem o próprio painel).
+var ABAS_OBSOLETAS = ['painel'];
+// Linhas da aba Configurações que só alimentavam essas abas antigas.
+var CONFIG_OBSOLETAS = ['receita liquida media por corrida'];
+var COR_SISTEMA = '#fd4502';
+
+/**
+ * Menu: Frota Polaris → Padronizar abas da planilha…
+ * Apaga as abas antigas que o sistema não usa (só as conhecidas, ex.: Painel) e deixa o cabeçalho
+ * de todas as abas do sistema no padrão laranja. Abas desconhecidas não são tocadas (só avisa).
+ */
+function padronizarPlanilha() {
+  var ui = SpreadsheetApp.getUi(); // fora da planilha (pelo app) isso falha e nada é feito
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!donoOuAvisa_(ui, ss)) return;
+  var plano = planoPadronizar_(ss);
+  var msg = 'Deixa o cabeçalho de todas as abas do sistema no padrão laranja (1ª linha fixa).';
+  if (plano.apagar.length) msg += '\n\nAPAGA as abas que o sistema não usa: ' + plano.apagar.join(', ') + '. (O Painel antigo só repetia, desatualizado, o que o Início do app já mostra.)';
+  if (plano.linhas.length) msg += '\n\nRemove da aba Configurações: ' + plano.linhas.join(', ') + ' (só alimentava o Painel antigo).';
+  if (plano.outras.length) msg += '\n\nNÃO mexe nestas abas, que não são do sistema: ' + plano.outras.join(', ') + '.';
+  if (ui.alert('Padronizar abas', msg + '\n\nContinuar?', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  var r = withLock_(function () { return padronizar_(ss); });
+  ui.alert('Pronto', 'Abas no padrão: ' + r.formatadas.join(', ') + '.' + (r.apagadas.length ? '\nApagadas: ' + r.apagadas.join(', ') + '.' : '') +
+    (r.linhas.length ? '\nRemovido de Configurações: ' + r.linhas.join(', ') + '.' : ''), ui.ButtonSet.OK);
+}
+
+function planoPadronizar_(ss) {
+  var sistema = Object.keys(SHEET).map(function (k) { return SHEET[k]; });
+  var nomes = ss.getSheets().map(function (s) { return s.getName(); });
+  var apagar = nomes.filter(function (n) { return ABAS_OBSOLETAS.indexOf(norm_(n)) >= 0; });
+  var outras = nomes.filter(function (n) { return sistema.indexOf(n) < 0 && apagar.indexOf(n) < 0; });
+  var linhas = [], conf = ss.getSheetByName(SHEET.CONF);
+  if (conf && conf.getLastRow() >= 2) {
+    conf.getRange(2, 1, conf.getLastRow() - 1, 1).getValues().forEach(function (r) {
+      var n = norm_(String(r[0]).replace(/\(.*\)/, ''));
+      if (CONFIG_OBSOLETAS.indexOf(n) >= 0) linhas.push(String(r[0]).trim());
+    });
+  }
+  return { apagar: apagar, outras: outras, linhas: linhas };
+}
+
+function padronizar_(ss) {
+  var plano = planoPadronizar_(ss);
+  plano.apagar.forEach(function (n) { var sh = ss.getSheetByName(n); if (sh) ss.deleteSheet(sh); });
+  var conf = ss.getSheetByName(SHEET.CONF);
+  if (conf && plano.linhas.length) {
+    var v = conf.getRange(1, 1, conf.getLastRow(), 1).getValues();
+    for (var i = v.length - 1; i >= 1; i--) if (plano.linhas.indexOf(String(v[i][0]).trim()) >= 0) conf.deleteRow(i + 1);
+  }
+  garanteTurnosConfig_(ss); // linhas "Turno" (08h-14h…) na aba Configurações, se ainda não existirem
+  try { compartilharPasta(); } catch (e) { /* segue: a padronização das abas não depende da pasta */ }
+  return { formatadas: formataAbas_(ss), apagadas: plano.apagar, linhas: plano.linhas };
+}
+
+/** Cabeçalho laranja (texto branco, negrito), 1ª linha fixa e aba laranja em todas as abas do sistema. Não apaga nada. */
+function formataAbas_(ss) {
+  var feitas = [];
+  Object.keys(SHEET).forEach(function (k) {
+    var sh = ss.getSheetByName(SHEET[k]);
+    if (!sh) return;
+    sh.setTabColor(COR_SISTEMA);
+    feitas.push(SHEET[k]);
+    if (k === 'ESCALA') return; // a escala tem um cabeçalho laranja por mês (montado pelo menu)
+    var cols = sh.getLastColumn();
+    if (!cols) return;
+    sh.getRange(1, 1, 1, cols).setBackground(COR_SISTEMA).setFontColor('#ffffff').setFontWeight('bold').setVerticalAlignment('middle');
+    sh.setFrozenRows(1);
+    sh.setRowHeight(1, 30);
+  });
+  return feitas;
+}
+
+function importacaoDesligada_() {
+  return PropertiesService.getScriptProperties().getProperty(PROP_SEM_IMPORTACAO) === '1';
 }
 
 /** Teste rápido no editor: mostra no registro o que o app enxerga. */
@@ -136,26 +469,60 @@ function testeSistema() {
 
 /* ============================== API: DADOS DO APP ============================== */
 
-function getApp() {
+/**
+ * Abertura do app: dados das telas + painel numa chamada só, lendo a planilha uma vez.
+ * (Antes eram duas chamadas seguidas, getApp e getDashboard, cada uma lendo tudo de novo.)
+ */
+function getHome(period) {
   var c = ctx_();
-  var fuel = fuelRows_(c);
-  var manut = rows_(table_(c.ss, 'MANUT')).map(manutEntry_(c));
-  var rec = rows_(table_(c.ss, 'REC')).map(recEntry_(c));
+  sincronizaPasta_(c.ss); // dono abriu o app: quem entrou na planilha ganha acesso à pasta de fotos
+  return { app: app_(c), dash: dash_(c, period) };
+}
+
+function getApp() { return app_(ctx_()); }
+
+/** Leituras compartilhadas entre telas e painel na mesma execução. */
+function fuel_(c) { return c._fuel || (c._fuel = fuelRows_(c)); }
+function manut_(c) { return c._manut || (c._manut = rows_(table_(c.ss, 'MANUT')).map(manutEntry_(c))); }
+function rec_(c) { return c._rec || (c._rec = rows_(table_(c.ss, 'REC')).map(recEntry_(c))); }
+function docs_(c) { return c._docs || (c._docs = rows_(table_(c.ss, 'DOCS'))); }
+
+function app_(c) {
+  var fuel = fuel_(c);
+  var manut = manut_(c);
+  var rec = rec_(c);
   var drivers = drivers_(c);
-  var lastKm = lastKmByMoto_(c.reg.rows, fuel, manut);
+  // Links das fotos: só das linhas que aparecem na tela (últimos turnos e turnos abertos).
+  regLinks_(c.reg, c.reg.rows.slice(-8).concat(openRows_(c.reg.rows, c.today)));
+  var lastKm = lastKmByMoto_(c.reg.rows, fuel, manut, c.frota);
   var open = openShifts_(c.reg.rows, c.today);
   var mes = c.today.slice(0, 7);
 
   var motoIds = c.frota.length ? c.frota.map(function (f) { return f.id; }) : distinct_(c.reg.rows, 'moto');
+  // Saída rápida: quem costuma pegar cada moto (vinculado no cadastro e último que usou), só entre entregadores ativos.
+  var ultimoEnt = {};
+  c.reg.rows.forEach(function (r) { if (cleanName_(r.entregador)) ultimoEnt[r.moto] = r.entregador; });
+  var sugere = function (nome) {
+    var n = cleanName_(nome);
+    if (!n) return '';
+    if (!drivers.length) return n;
+    var d = matchDriver_(n, drivers);
+    return d && ativo_(d) ? d.nome : '';
+  };
   var motos = motoIds.map(function (id) {
     var f = c.frota.filter(function (x) { return x.id === id; })[0] || {};
     return {
       id: id, modelo: f.modelo || '', lastKm: lastKm[id] == null ? null : lastKm[id],
-      open: open.filter(function (o) { return o.moto === id; })[0] || null
+      open: open.filter(function (o) { return o.moto === id; })[0] || null,
+      vinculado: sugere(f.entregador), ultimoEntregador: sugere(ultimoEnt[id])
     };
   });
 
   var consumos = consumoPorAbastecimento_(fuel);
+  var abast = fuel.filter(function (f) { return f.origem === 'abast'; });
+  var ultAbast = abast.slice(-8), ultManut = manut.slice(-8);
+  tableLinks_(table_(c.ss, 'ABAST'), ultAbast, 'row');
+  tableLinks_(table_(c.ss, 'MANUT'), ultManut, 'row');
   return {
     user: userEmail_(),
     sheetUrl: c.ss.getUrl(),
@@ -166,25 +533,53 @@ function getApp() {
     motos: motos,
     entregadores: drivers.filter(ativo_).map(function (d) { return d.nome; }),
     turnos: byFrequency_(c.reg.rows, 'turno'),
+    turnoHoras: turnoHoras_(c.reg.rows, c.today),
+    escalaHoje: escalaHoje_(c, drivers).filter(function (e) { return e.cadastrado; })
+      .map(function (e) { return { nome: e.nome, turno: e.turno, saiu: e.emTurno }; }),
     responsaveis: byFrequency_(c.reg.rows.map(function (r) { return { x: r.recebido }; })
       .concat(c.reg.rows.map(function (r) { return { x: r.devolvido }; })), 'x'),
     ocorrencias: byFrequency_(c.reg.rows, 'ocorrencia').slice(0, 12),
     statusOptions: statusOptions_(c.reg),
-    postos: byFrequency_(fuel.filter(function (f) { return f.origem === 'abast'; }), 'posto').slice(0, 12),
+    postos: byFrequency_(abast, 'posto').slice(0, 12),
     manutTipos: MANUT_TIPOS,
     docTipos: DOC_TIPOS,
     openShifts: open,
     recentTurnos: c.reg.rows.slice(-8).reverse().map(publicRow_),
-    recentFuel: fuel.filter(function (f) { return f.origem === 'abast'; }).slice(-8).reverse().map(function (f) {
+    recentFuel: ultAbast.slice().reverse().map(function (f) {
       var o = pick_(f, ['row', 'dataFmt', 'hora', 'moto', 'km', 'litros', 'valor', 'preco', 'posto', 'cheio', 'entregador', 'fotoCupom', 'fotoPainel']);
       o.consumo = consumos[f.row] || null;
       return o;
     }),
     recentRec: rec.slice(-8).reverse(),
-    recentManut: manut.slice(-8).reverse(),
+    recentManut: ultManut.slice().reverse(),
+    frota: frotaPublica_(c, lastKm),
     receitaMes: sum_(rec.filter(function (r) { return r.key.slice(0, 7) === mes; }), 'valor'),
     combustivelMes: sum_(fuel.filter(function (f) { return f.key.slice(0, 7) === mes; }), 'valor')
   };
+}
+
+/** Horário típico de saída de cada turno (mediana dos últimos 60 dias), para sugerir o turno pela hora. */
+function turnoHoras_(rows, today) {
+  var min = addDaysKey_(today, -60), por = {};
+  rows.forEach(function (r) {
+    var m = /^(\d{1,2}):(\d{2})/.exec(r.horaSaida || '');
+    if (!m || !r.turno || !r.key || r.key < min || norm_(r.turno) === 'folga') return;
+    (por[r.turno] = por[r.turno] || []).push(+m[1] * 60 + +m[2]);
+  });
+  return Object.keys(por).filter(function (k) { return por[k].length >= 2; }).map(function (k) {
+    var v = por[k].sort(function (a, b) { return a - b; });
+    return { turno: k, min: v[Math.floor(v.length / 2)], n: v.length };
+  }).sort(function (a, b) { return a.min - b.min; });
+}
+
+/** Dados das motos para a tela de cadastro (sem nova chamada ao servidor ao abrir a tela). */
+function frotaPublica_(c, lastKm) {
+  var n = lancamentosPorMoto_(c);
+  return c.frota.map(function (f) {
+    return { id: f.id, modelo: f.modelo, placa: f.placa, entregador: f.entregador, inicio: f.inicio, kmInicial: f.kmInicial,
+      ultRevKm: f.ultRevKm, ultRevData: f.ultRevData, proxRevKm: f.proxRevKm, proxRevData: f.proxRevData,
+      kmAtual: lastKm[f.id] == null ? null : lastKm[f.id], lancamentos: n[f.id] || 0 };
+  });
 }
 
 /* ============================== API: TURNOS ============================== */
@@ -192,8 +587,9 @@ function getApp() {
 function openShift(p) {
   return withLock_(function () {
     var c = ctx_();
-    var d = validateBase_(p);
+    var d = validateBase_(p, c);
     if (d.kmIni == null) throw new Error('Informe o KM de início.');
+    if (c.config.fotoObrigatoria && !p.fotoIni) throw new Error('Tire a foto do painel com o KM de saída.');
     var jaAberto = openShifts_(c.reg.rows, c.today).filter(function (o) { return o.moto === d.moto; })[0];
     if (jaAberto && !p.forcar) {
       throw new Error('A moto ' + d.moto + ' já está com turno aberto (' + jaAberto.entregador + ', ' +
@@ -219,6 +615,7 @@ function closeShift(rowNumber, p) {
     if (r.moto !== p.moto) throw new Error('A planilha mudou (a linha agora é de outra moto). Atualize a tela.');
     if (r.kmFim != null) throw new Error('Este turno já foi fechado. Atualize a tela.');
     var fim = validateFechamento_(p, r.kmIni);
+    if (c.config.fotoObrigatoria && !p.fotoFim) throw new Error('Tire a foto do painel com o KM de retorno.');
     var values = closingValues_(r.kmIni, fim, c.config);
     values.horaRetorno = hora_(c.tz);
     if (p.fotoFim) values.fotoFim = savePhoto_(c.ss, p.fotoFim, new Date(), r.moto + '_retorno_km' + fim.kmFim);
@@ -230,9 +627,11 @@ function closeShift(rowNumber, p) {
 function saveFullShift(p) {
   return withLock_(function () {
     var c = ctx_();
-    var d = validateBase_(p);
+    var d = validateBase_(p, c);
     if (d.kmIni == null) throw new Error('Informe o KM de início.');
     var fim = validateFechamento_(p, d.kmIni);
+    // Turno completo é lançado depois: só a foto do KM final é exigida (a da saída pode não existir mais).
+    if (c.config.fotoObrigatoria && !p.fotoFim) throw new Error('Tire a foto do painel com o KM de retorno.');
     var values = closingValues_(d.kmIni, fim, c.config);
     values.data = d.data; values.moto = d.moto; values.entregador = d.entregador; values.turno = d.turno;
     values.kmIni = d.kmIni; values.recebido = d.recebido; values.por = userEmail_();
@@ -261,7 +660,7 @@ function saveFuel(p) {
     var o = {
       data: data, hora: hora_(c.tz), moto: moto, km: km == null ? '' : km, litros: litros == null ? '' : litros,
       valor: valor, preco: litros > 0 ? round_(valor / litros, 3) : '', posto: String(p.posto || '').trim(),
-      cheio: p.cheio === false ? 'Não' : 'Sim', entregador: String(p.entregador || '').trim(),
+      cheio: p.cheio === false ? 'Não' : 'Sim', entregador: entregadorValido_(c, p.entregador, false),
       obs: String(p.obs || '').trim(), por: userEmail_(), em: new Date()
     };
     if (p.fotoCupom) o.fotoCupom = savePhoto_(c.ss, p.fotoCupom, data, moto + '_cupom');
@@ -343,7 +742,11 @@ function getDriver(id) {
   var c = ctx_();
   var d = drivers_(c).filter(function (x) { return x.id === id; })[0];
   if (!d) throw new Error('Entregador não encontrado.');
-  var docs = rows_(table_(c.ss, 'DOCS')).filter(function (x) { return x.entId === id; }).map(function (x) {
+  tableLinks_(table_(c.ss, 'ENT'), [d]);
+  var tDocs = table_(c.ss, 'DOCS');
+  var meus = rows_(tDocs).filter(function (x) { return x.entId === id; });
+  tableLinks_(tDocs, meus);
+  var docs = meus.map(function (x) {
     var vk = parseDate_(x.validade) ? dateKey_(parseDate_(x.validade), c.tz) : '';
     return { tipo: x.tipo, validade: vk, dias: vk ? daysBetween_(c.today, vk) : null, url: x.arquivo,
       nome: x.nomeArquivo, data: x.data ? fmtDate_(parseDate_(x.data) || new Date(x.data), c.tz) : '', por: x.por };
@@ -404,6 +807,7 @@ function uploadDriverDoc(p) {
     var t = table_(c.ss, 'ENT');
     var d = rows_(t).filter(function (x) { return x.id === p.entId; })[0];
     if (!d) throw new Error('Entregador não encontrado.');
+    tableLinks_(t, [d]);
     var tipo = String(p.tipo || '').trim() || 'Outro';
     var validade = p.validade ? parseDate_(p.validade) : null;
     var folder = driverFolder_(c, t, d);
@@ -421,16 +825,17 @@ function uploadDriverDoc(p) {
 
 /* ============================== API: PAINEL ============================== */
 
-function getDashboard(period) {
-  var c = ctx_();
+function getDashboard(period) { return dash_(ctx_(), period); }
+
+function dash_(c, period) {
   var P = periodo_(String(period || '7'), c.today);
   var turnos = c.reg.rows;
-  var fuel = fuelRows_(c);
-  var manut = rows_(table_(c.ss, 'MANUT')).map(manutEntry_(c));
-  var rec = rows_(table_(c.ss, 'REC')).map(recEntry_(c));
+  var fuel = fuel_(c);
+  var manut = manut_(c);
+  var rec = rec_(c);
   var drivers = drivers_(c);
-  var docs = rows_(table_(c.ss, 'DOCS'));
-  var escala = readEscala_(c.ss, c.today);
+  var docs = docs_(c);
+  var escala = escala_(c);
   var meta = c.config.meta;
   var inR = function (k, a, b) { return k && k >= a && k <= b; };
 
@@ -479,7 +884,7 @@ function getDashboard(period) {
   }
 
   // Motos
-  var lastKm = lastKmByMoto_(turnos, fuel, manut);
+  var lastKm = lastKmByMoto_(turnos, fuel, manut, c.frota);
   var open = openShifts_(turnos, c.today);
   var k14 = addDaysKey_(c.today, -13);
   var motos = c.frota.map(function (f) {
@@ -522,12 +927,7 @@ function getDashboard(period) {
     .sort(function (a, b) { return b.corridas - a.corridas || b.turnos - a.turnos; });
 
   // Escala de hoje
-  var escalaHoje = (escala[c.today] || []).map(function (n) {
-    var d = matchDriver_(n, drivers);
-    var nome = d ? d.nome : titleCase_(n);
-    var emTurno = turnos.some(function (r) { return r.key === c.today && sameName_(r.entregador, nome); });
-    return { nome: nome, emTurno: emTurno };
-  });
+  var escalaHoje = escalaHoje_(c, drivers).map(function (e) { return { nome: e.nome, turno: e.turno, emTurno: e.emTurno }; });
 
   var alertas = buildAlerts_(c, motos, drivers, docs, turnos, rec, P, cur);
   var insights = buildInsights_(c, P, cur, prev, motos, frotaMedia, ranking, drivers);
@@ -674,8 +1074,8 @@ function perfByDriver_(c, drivers, a, b, escala) {
   if (escala) {
     Object.keys(escala).forEach(function (k) {
       if (k < a || k > b || k > c.today) return;
-      escala[k].forEach(function (n) {
-        var d = matchDriver_(n, drivers);
+      escala[k].forEach(function (e) {
+        var d = matchDriver_(e.nome, drivers);
         if (!d) return;
         out[d.id].escalados++;
         if (k < c.today && !out[d.id].dias[k]) out[d.id].faltas++;
@@ -691,19 +1091,33 @@ function perfByDriver_(c, drivers, a, b, escala) {
   return out;
 }
 
+/** Salário, admissão e desligamento de cada entregador, convertidos uma vez só (o painel pergunta dia a dia). */
+function salariosBase_(drivers, tz) {
+  if (drivers._sal && drivers._salTz === tz) return drivers._sal;
+  var lista = [];
+  drivers.forEach(function (d) {
+    var sal = toNumber_(d.salario);
+    if (!(sal > 0)) return;
+    var adm = parseDate_(d.admissao), des = parseDate_(d.desligamento);
+    lista.push({ sal: sal, adm: adm ? dateKey_(adm, tz) : '', des: des ? dateKey_(des, tz) : '', inativo: !des && norm_(d.status) === 'inativo' });
+  });
+  drivers._sal = lista;
+  drivers._salTz = tz;
+  return lista;
+}
+
 function salarios_(drivers, a, b, tz) {
   var total = 0;
-  var ativos = drivers.filter(function (d) { return toNumber_(d.salario) > 0; });
+  var ativos = salariosBase_(drivers, tz);
   if (!ativos.length) return 0;
   for (var k = a; k <= b; k = addDaysKey_(k, 1)) {
     var y = +k.slice(0, 4), m = +k.slice(5, 7);
     var diasMes = new Date(Date.UTC(y, m, 0)).getUTCDate();
     ativos.forEach(function (d) {
-      var adm = parseDate_(d.admissao), des = parseDate_(d.desligamento);
-      if (adm && dateKey_(adm, tz) > k) return;
-      if (des && dateKey_(des, tz) < k) return;
-      if (!des && norm_(d.status) === 'inativo') return;
-      total += toNumber_(d.salario) / diasMes;
+      if (d.adm && d.adm > k) return;
+      if (d.des && d.des < k) return;
+      if (d.inativo) return;
+      total += d.sal / diasMes;
     });
   }
   return total;
@@ -813,9 +1227,11 @@ function recEntry_(c) {
   };
 }
 
-function lastKmByMoto_(turnos, fuel, manut) {
+/** Maior KM conhecido de cada moto: lançamentos + KM do cadastro (aba Frota), que vale como primeira leitura. */
+function lastKmByMoto_(turnos, fuel, manut, frota) {
   var out = {};
   var put = function (m, v) { if (v == null || !m) return; if (out[m] == null || v > out[m]) out[m] = v; };
+  (frota || []).forEach(function (f) { put(f.id, f.kmInicial); put(f.id, f.ultRevKm); });
   turnos.forEach(function (r) { put(r.moto, r.kmIni); put(r.moto, r.kmFim); });
   (fuel || []).forEach(function (f) { put(f.moto, f.km); });
   (manut || []).forEach(function (m) { put(m.moto, m.km); });
@@ -829,7 +1245,7 @@ function drivers_(c) {
   if (c._drivers) return c._drivers;
   var t = table_(c.ss, 'ENT');
   var rows = rows_(t);
-  if (!rows.length) {
+  if (!rows.length && !importacaoDesligada_()) {
     var nomes = nomesConhecidos_(c);
     if (nomes.length) {
       var matrix = nomes.map(function (n, i) {
@@ -899,9 +1315,14 @@ function matchDriver_(nome, drivers) {
 }
 
 function driverFolder_(c, t, d) {
+  var root = rootFolder_(c.ss);
+  if (!root) return pastaPendente_(c.ss); // sem acesso à pasta oficial: plano B (não grava o link da pasta)
+  var base = pastaFilha_(root, 'Documentos dos entregadores', 'PASTA_DOCS_' + c.ss.getId());
   var m = String(d.pasta || '').match(/folders\/([\w-]+)/);
-  if (m) { try { return DriveApp.getFolderById(m[1]); } catch (e) { /* recria */ } }
-  var base = subFolder_(rootFolder_(c.ss), 'Documentos dos entregadores');
+  if (m) {
+    try { var atual = DriveApp.getFolderById(m[1]), it = atual.getParents(); while (it.hasNext()) if (it.next().getId() === base.getId()) return atual; }
+    catch (e) { /* sem acesso, apagada ou fora da pasta oficial: usa a da pasta oficial */ }
+  }
   var f = subFolder_(base, d.nome + ' (' + d.id + ')');
   writeObj_(t, d._row, { pasta: f.getUrl() });
   return f;
@@ -909,7 +1330,11 @@ function driverFolder_(c, t, d) {
 
 /* ============================== ESCALA ============================== */
 
-/** Lê a aba ESCALA (blocos "ESCALA MÊS DE SETEMBRO 2026") → { 'aaaa-mm-dd': [nomes com TR] }. */
+/**
+ * Lê a aba ESCALA (blocos "ESCALA MÊS DE NOVEMBRO 2026") → { 'aaaa-mm-dd': [{ nome, turno }] }.
+ * Conta como escalado quem tem no dia um turno (08h-14h…) ou "TR" (formato antigo, sem horário → turno '').
+ * F, FOLGA ou qualquer outra anotação = não trabalha.
+ */
 function readEscala_(ss, today) {
   var sh = ss.getSheetByName(SHEET.ESCALA);
   var out = {};
@@ -924,17 +1349,38 @@ function readEscala_(ss, today) {
     if (a.indexOf('dias do mes') === 0) { dias = row.map(function (x, i) { return i ? toNumber_(x) : null; }); return; }
     if (!a || a.indexOf('dia da semana') === 0 || !dias) return;
     row.forEach(function (x, i) {
-      if (!i || !dias[i] || norm_(x) !== 'tr') return;
+      if (!i || !dias[i]) return;
+      var n = norm_(x), turno = null;
+      if (n === 'tr') turno = '';
+      else if (n && n !== 'f' && n !== 'folga') { var t = parseTurno_(x); if (t) turno = t.nome; }
+      if (turno === null) return;
       var k = cur.ano + '-' + (cur.mes < 10 ? '0' : '') + cur.mes + '-' + (dias[i] < 10 ? '0' : '') + dias[i];
-      (out[k] = out[k] || []).push(String(row[0]).trim());
+      (out[k] = out[k] || []).push({ nome: String(row[0]).trim(), turno: turno });
     });
   });
   return out;
 }
 
+function escala_(c) { return c._escala || (c._escala = readEscala_(c.ss, c.today)); }
+
+/** Escala de hoje com o nome do cadastro, o turno e se já saiu (para o Início e a saída rápida). */
+function escalaHoje_(c, drivers) {
+  var ordem = {};
+  (c.config.turnos || []).forEach(function (t, i) { ordem[t.nome] = i; });
+  return (escala_(c)[c.today] || []).map(function (e) {
+    var d = matchDriver_(e.nome, drivers);
+    var nome = d ? d.nome : titleCase_(e.nome);
+    var saiu = c.reg.rows.some(function (r) { return r.key === c.today && sameName_(r.entregador, nome); });
+    return { nome: nome, turno: e.turno, emTurno: saiu, cadastrado: !!(d && ativo_(d)) };
+  }).sort(function (a, b) {
+    var oa = a.turno in ordem ? ordem[a.turno] : 99, ob = b.turno in ordem ? ordem[b.turno] : 99;
+    return oa - ob || a.nome.localeCompare(b.nome, 'pt-BR');
+  });
+}
+
 /* ============================== VALIDAÇÃO / CÁLCULOS DE TURNO ============================== */
 
-function validateBase_(p) {
+function validateBase_(p, c) {
   p = p || {};
   var data = parseDate_(p.data);
   if (!data) throw new Error('Data inválida.');
@@ -944,6 +1390,8 @@ function validateBase_(p) {
   if (!cleanName_(entregador)) throw new Error('Informe o entregador.');
   var turno = String(p.turno || '').trim();
   if (!turno) throw new Error('Informe o turno.');
+  // Dados padronizados (para exportar sem bagunça): turno da lista fixa e entregador do cadastro, com o nome completo.
+  if (c) { turno = turnoValido_(c, turno); entregador = entregadorValido_(c, entregador, true); }
   var kmIni = toNumber_(p.kmIni);
   if (kmIni != null && kmIni < 0) throw new Error('KM de início inválido.');
   return { data: data, moto: moto, entregador: entregador, turno: turno, kmIni: kmIni, recebido: String(p.recebido || '').trim() };
@@ -984,7 +1432,14 @@ function ss_() {
   try {
     ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
   } catch (e) {
-    throw new Error('SEM_ACESSO: sua conta não tem acesso à planilha do sistema. Peça ao administrador para compartilhar com você.');
+    // Diz QUAL conta e QUAL planilha (final do código), e separa "falta permissão do Google" de "falta compartilhar".
+    var msg = String(e && e.message || e), quem = userEmail_(), fim = id ? ' (planilha …' + String(id).slice(-6) + ')' : '';
+    if (/googleapis\.com\/auth|suficientes|sufficient/i.test(msg)) {
+      throw new Error('SEM_ACESSO: o app não recebeu permissão para usar suas planilhas' + (quem ? ' na conta ' + quem : '') +
+        '. Remova o acesso do app em myaccount.google.com/connections, abra o link de novo e, na tela do Google, marque "Selecionar tudo" antes de continuar.');
+    }
+    throw new Error('SEM_ACESSO: ' + (quem ? 'a conta ' + quem : 'sua conta') + ' não tem acesso à planilha do sistema' + fim +
+      '. Peça ao administrador para compartilhar com você.');
   }
   if (!ss) throw new Error('O sistema ainda não foi configurado. Rode a função "configurar" no editor do Apps Script.');
   return ss;
@@ -994,30 +1449,32 @@ function ctx_() {
   var ss = ss_();
   var tz = ss.getSpreadsheetTimeZone();
   var config = readConfig_(ss);
-  return { ss: ss, tz: tz, today: dateKey_(new Date(), tz), config: config, frota: readFrota_(ss, config), reg: readRegistro_(ss) };
+  return { ss: ss, tz: tz, today: dateKey_(new Date(), tz), config: config, frota: readFrota_(ss, config, tz), reg: readRegistro_(ss, tz) };
 }
 
-function readRegistro_(ss) {
+/**
+ * Lê a aba REGISTRO DIÁRIO numa leitura só (cabeçalho + dados).
+ * Os links das fotos NÃO são lidos aqui: ler links da aba inteira é a operação mais lenta da planilha.
+ * Quem precisa mostrar foto chama regLinks_ só para as linhas que vão aparecer na tela.
+ */
+function readRegistro_(ss, tz) {
   var sheet = ss.getSheetByName(SHEET.REG);
   if (!sheet) throw new Error('Aba "' + SHEET.REG + '" não encontrada na planilha.');
-  var tz = ss.getSpreadsheetTimeZone();
+  tz = tz || ss.getSpreadsheetTimeZone();
   var lastCol = sheet.getLastColumn();
   var lastRow = sheet.getLastRow();
-  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var all = sheet.getRange(1, 1, Math.max(lastRow, 1), lastCol).getValues();
+  var header = all[0];
   var idx = headerIndex_(header, COL);
   if (idx.data == null) idx.data = 0; // cabeçalho da data é "."
   ['moto', 'kmIni', 'kmFim'].forEach(function (k) {
     if (idx[k] == null) throw new Error('Coluna "' + COL[k] + '" não encontrada na aba ' + SHEET.REG + '.');
   });
-  var values = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, lastCol).getValues() : [];
+  var values = all.slice(1);
   var links = {};
   REG_LINKS.forEach(function (k) {
     if (idx[k] == null || lastRow < 2) return;
-    links[k] = sheet.getRange(2, idx[k] + 1, lastRow - 1, 1).getRichTextValues().map(function (r, i) {
-      var url = r[0] && r[0].getLinkUrl();
-      var raw = String(values[i][idx[k]] || '');
-      return url || (/^https?:\/\//.test(raw) ? raw : '');
-    });
+    links[k] = values.map(function (v) { var raw = String(v[idx[k]] || ''); return /^https?:\/\//.test(raw) ? raw : ''; });
   });
   var rows = [], lastUsed = 1;
   values.forEach(function (v, i) {
@@ -1035,7 +1492,7 @@ function readRegistro_(ss) {
       litros: toNumber_(get('litros')), valor: toNumber_(get('valor')), corridas: toNumber_(get('corridas')),
       meta: toNumber_(get('meta')), recebido: String(get('recebido') || '').trim(), devolvido: String(get('devolvido') || '').trim(),
       status: String(get('status') || '').trim(), ocorrencia: String(get('ocorrencia') || '').trim(),
-      horaSaida: String(get('horaSaida') || ''), horaRetorno: String(get('horaRetorno') || ''),
+      horaSaida: horaTxt_(get('horaSaida'), tz), horaRetorno: horaTxt_(get('horaRetorno'), tz),
       checklist: String(get('checklist') || ''),
       fotoIni: links.fotoIni ? links.fotoIni[i] : '', fotoFim: links.fotoFim ? links.fotoFim[i] : ''
     });
@@ -1044,17 +1501,78 @@ function readRegistro_(ss) {
 }
 
 function readConfig_(ss) {
-  var config = { meta: 12, revKm: 3000, revMeses: 3 };
+  var config = { meta: 12, revKm: 3000, revMeses: 3, fotoObrigatoria: true, turnos: [] };
   var sh = ss.getSheetByName(SHEET.CONF);
-  if (!sh || sh.getLastRow() < 2) return config;
+  if (!sh || sh.getLastRow() < 2) { config.turnos = TURNOS_PADRAO.map(parseTurno_); return config; }
   sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
     var nome = norm_(r[0]), val = toNumber_(r[1]);
+    // Linhas "Turno" = turnos fixos (ex.: Turno | 08h-14h). Sem nenhuma linha, valem os turnos padrão.
+    if (nome === 'turno' || /^turno \d+$/.test(nome)) { var t = parseTurno_(r[1]); if (t) config.turnos.push(t); return; }
+    // Linha opcional "Foto do KM obrigatória" = Sim/Não (sem a linha: obrigatória)
+    if (nome.indexOf('foto') >= 0) {
+      var t = norm_(r[1]);
+      if (t) config.fotoObrigatoria = ['nao', 'n', 'false', '0', 'falso'].indexOf(t) < 0;
+      return;
+    }
     if (val == null) return;
     if (nome.indexOf('meta') >= 0) config.meta = val;
     else if (nome.indexOf('revis') >= 0 && nome.indexOf('km') >= 0) config.revKm = val;
     else if (nome.indexOf('revis') >= 0 && nome.indexOf('mes') >= 0) config.revMeses = val;
   });
+  if (!config.turnos.length) config.turnos = TURNOS_PADRAO.map(parseTurno_);
   return config;
+}
+
+/* ============================== TURNOS FIXOS E ENTREGADOR PADRONIZADO ============================== */
+
+var TURNOS_PADRAO = ['08h-14h', '12h-18h', '18h-00h'];
+
+/** "08h-14h", "08:00 - 14:00", "8h às 14h" → { nome: '08h-14h', ini: 480, fim: 840 } (minutos do dia). */
+function parseTurno_(v) {
+  var s = String(v == null ? '' : v).trim();
+  var m = s.match(/(\d{1,2})\s*(?:h|:)?\s*(\d{2})?\s*(?:h)?\s*(?:-|–|—|a|as|às|ate|até)\s*(\d{1,2})\s*(?:h|:)?\s*(\d{2})?/i);
+  if (!m) return null;
+  var h1 = +m[1], m1 = +(m[2] || 0), h2 = +m[3], m2 = +(m[4] || 0);
+  if (h1 > 24 || h2 > 24 || m1 > 59 || m2 > 59) return null;
+  var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  var rot = function (h, mm) { return p2(h % 24) + 'h' + (mm ? p2(mm) : ''); };
+  return { nome: rot(h1, m1) + '-' + rot(h2, m2), ini: (h1 % 24) * 60 + m1, fim: (h2 % 24) * 60 + m2 };
+}
+
+/** Aceita o turno só se for um dos fixos (sem diferença de maiúsculas/espaços) e devolve o nome padronizado. */
+function turnoValido_(c, turno) {
+  var lista = c.config.turnos || [];
+  if (!lista.length) return turno;
+  var t = parseTurno_(turno), k = norm_(turno).replace(/\s/g, '');
+  var achou = lista.filter(function (x) { return norm_(x.nome) === k || (t && t.nome === x.nome); })[0];
+  if (!achou) throw new Error('Escolha um dos turnos: ' + lista.map(function (x) { return x.nome; }).join(', ') + '.');
+  return achou.nome;
+}
+
+/** Entregador só do cadastro (ativo). Devolve o nome completo como está na tela Equipe. */
+function entregadorValido_(c, nome, obrigatorio) {
+  var n = cleanName_(nome);
+  if (!n) { if (obrigatorio) throw new Error('Informe o entregador.'); return ''; }
+  var todos = drivers_(c), ativos = todos.filter(ativo_);
+  var d = matchDriver_(n, ativos);
+  if (d) return d.nome;
+  var inativo = matchDriver_(n, todos);
+  if (inativo) throw new Error(inativo.nome + ' está inativo no cadastro. Reative em Equipe ou escolha outro entregador.');
+  throw new Error('"' + n + '" não está cadastrado. Cadastre em Equipe → Novo e depois escolha na lista.');
+}
+
+/** Garante as linhas de turno na aba Configurações (para ficarem visíveis e editáveis na planilha). */
+function garanteTurnosConfig_(ss) {
+  var sh = ss.getSheetByName(SHEET.CONF);
+  if (!sh) { sh = ss.insertSheet(SHEET.CONF); sh.getRange(1, 1, 1, 2).setValues([['Parâmetro', 'Valor']]); }
+  var last = sh.getLastRow();
+  var tem = last >= 2 && sh.getRange(2, 1, last - 1, 1).getValues().some(function (r) { var n = norm_(r[0]); return n === 'turno' || /^turno \d+$/.test(n); });
+  if (tem) return false;
+  var linhas = TURNOS_PADRAO.map(function (t) { return ['Turno', t]; });
+  var rg = sh.getRange(Math.max(last, 1) + 1, 1, linhas.length, 2);
+  rg.setNumberFormat('@');
+  rg.setValues(linhas);
+  return true;
 }
 
 var FROTA_COLS = {
@@ -1062,24 +1580,160 @@ var FROTA_COLS = {
   kmInicial: 'KM inicial', ultRevKm: 'Última revisão (KM)', ultRevData: 'Última revisão (data)', proxRevKm: 'Próxima revisão (KM)'
 };
 
-function readFrota_(ss, config) {
+function readFrota_(ss, config, tz) {
   var sh = ss.getSheetByName(SHEET.FROTA);
-  if (!sh || sh.getLastRow() < 2) return [];
-  var tz = ss.getSpreadsheetTimeZone();
-  var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var lastRow = sh ? sh.getLastRow() : 0;
+  if (lastRow < 2) return [];
+  tz = tz || ss.getSpreadsheetTimeZone();
+  var data = sh.getRange(1, 1, lastRow, sh.getLastColumn()).getValues();
   var idx = headerIndex_(data[0], FROTA_COLS);
   return data.slice(1).map(function (v, i) {
     var get = function (k) { return idx[k] == null ? '' : v[idx[k]]; };
     var id = String(get('id') || '').trim();
     if (!id) return null;
     var ultRevKm = toNumber_(get('ultRevKm')), kmInicial = toNumber_(get('kmInicial')), prox = toNumber_(get('proxRevKm'));
+    var proxPlanilha = prox;
     if (prox == null) prox = (ultRevKm != null ? ultRevKm : (kmInicial || 0)) + config.revKm;
-    var base = parseDate_(get('ultRevData')) || parseDate_(get('inicio'));
+    var dRev = parseDate_(get('ultRevData')), dIni = parseDate_(get('inicio'));
+    var base = dRev || dIni;
     var proxData = null;
     if (base && config.revMeses) { proxData = new Date(base.getTime()); proxData.setMonth(proxData.getMonth() + config.revMeses); }
     return { row: i + 2, id: id, modelo: String(get('modelo') || '').trim(), entregador: String(get('entregador') || '').trim(),
-      proxRevKm: prox, proxRevData: proxData ? dateKey_(proxData, tz) : null };
+      proxRevKm: prox, proxRevData: proxData ? dateKey_(proxData, tz) : null,
+      placa: String(get('placa') || '').trim(), kmInicial: kmInicial, ultRevKm: ultRevKm, proxRevKmPlanilha: proxPlanilha,
+      inicio: dIni ? dateKey_(dIni, tz) : '', ultRevData: dRev ? dateKey_(dRev, tz) : '' };
   }).filter(Boolean);
+}
+
+/* ============================== API: MOTOS (aba Frota) ============================== */
+
+/** Aba Frota pronta para gravar: cria a aba e as colunas que faltarem (no fim), sem mexer nas existentes. */
+function frotaTable_(ss) {
+  var sh = ss.getSheetByName(SHEET.FROTA) || ss.insertSheet(SHEET.FROTA);
+  var lastCol = sh.getLastColumn();
+  var header = lastCol ? sh.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  var idx = headerIndex_(header, FROTA_COLS);
+  var faltam = Object.keys(FROTA_COLS).filter(function (k) { return idx[k] == null; });
+  if (faltam.length) {
+    var start = header.some(function (h) { return String(h).trim(); }) ? lastCol + 1 : 1;
+    var need = start + faltam.length - 1;
+    if (sh.getMaxColumns() < need) sh.insertColumnsAfter(sh.getMaxColumns(), need - sh.getMaxColumns());
+    faltam.forEach(function (k, j) {
+      var cell = sh.getRange(1, start + j);
+      if (start + j > 1) sh.getRange(1, start + j - 1).copyTo(cell, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      cell.setValue(FROTA_COLS[k]);
+      idx[k] = start + j - 1;
+    });
+    lastCol = Math.max(lastCol, need);
+  }
+  return { sheet: sh, idx: idx, lastCol: lastCol };
+}
+
+function chaveMoto_(s) { return norm_(s).replace(/[\s\-.]/g, ''); }
+
+/** Quantos lançamentos (turnos, abastecimentos, manutenções) cada moto tem. */
+function lancamentosPorMoto_(c) {
+  var n = {};
+  var conta = function (m) { if (m) n[m] = (n[m] || 0) + 1; };
+  c.reg.rows.forEach(function (r) { conta(r.moto); });
+  fuel_(c).forEach(function (f) { if (f.origem === 'abast') conta(f.moto); });
+  manut_(c).forEach(function (m) { conta(m.moto); });
+  return n;
+}
+
+function validaMoto_(p, novo, today, tz) {
+  p = p || {};
+  var id = String(p.id || '').trim().replace(/\s+/g, ' ');
+  if (!id) throw new Error('Informe a identificação da moto (ex.: MOTO 01).');
+  if (id.length > 30) throw new Error('Identificação muito longa (máximo 30 caracteres).');
+  if (norm_(id) === 'folga') throw new Error('"FOLGA" não pode ser nome de moto.');
+  var placa = String(p.placa || '').toUpperCase().replace(/[\s\-.]/g, '');
+  if (placa && !/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(placa)) throw new Error('Placa inválida. Use o formato ABC1D23 ou ABC1234.');
+  var km = toNumber_(p.kmInicial), rev = toNumber_(p.ultRevKm);
+  if (novo && km == null) throw new Error('Informe o KM atual da moto (o que aparece no painel).');
+  [[km, 'KM'], [rev, 'KM da última revisão']].forEach(function (x) {
+    if (x[0] != null && (x[0] < 0 || x[0] > 999999 || Math.floor(x[0]) !== x[0])) throw new Error(x[1] + ' inválido: use um número inteiro entre 0 e 999.999.');
+  });
+  var inicio = p.inicio ? parseDate_(p.inicio) : null, revData = p.ultRevData ? parseDate_(p.ultRevData) : null;
+  if (p.inicio && !inicio) throw new Error('Data de início de uso inválida.');
+  if (p.ultRevData && !revData) throw new Error('Data da última revisão inválida.');
+  var futura = function (d) { return d && dateKey_(d, tz) > today; };
+  if (futura(revData)) throw new Error('A data da última revisão não pode ser no futuro.');
+  if (futura(inicio)) throw new Error('A data de início de uso não pode ser no futuro.');
+  return { id: id, placa: placa, modelo: String(p.modelo || '').trim(), entregador: String(p.entregador || '').trim(),
+    kmInicial: km, ultRevKm: rev, inicio: inicio, ultRevData: revData };
+}
+
+/** Cadastra (sem p.original) ou atualiza (p.original = ID atual) uma moto na aba Frota. */
+function saveMoto(p) {
+  return withLock_(function () {
+    var c = ctx_();
+    var original = String((p && p.original) || '').trim();
+    var alvo = original ? c.frota.filter(function (f) { return f.id === original; })[0] : null;
+    if (original && !alvo) throw new Error('Moto não encontrada. Atualize a tela.');
+    var d = validaMoto_(p, !alvo, c.today, c.tz);
+    d.entregador = entregadorValido_(c, d.entregador, false);
+    if (alvo && d.id !== alvo.id) throw new Error('A identificação da moto não pode ser mudada (os lançamentos usam esse nome).');
+    c.frota.forEach(function (f) {
+      if (f === alvo) return;
+      if (chaveMoto_(f.id) === chaveMoto_(d.id)) throw new Error('Já existe a moto ' + f.id + '.');
+      if (d.placa && f.placa && chaveMoto_(f.placa) === chaveMoto_(d.placa)) throw new Error('A placa ' + d.placa + ' já está cadastrada na ' + f.id + '.');
+    });
+    var lancado = lastKmByMoto_(c.reg.rows, fuel_(c), manut_(c))[d.id];
+    var kmAtual = Math.max(d.kmInicial == null ? 0 : d.kmInicial, lancado == null ? 0 : lancado);
+    if (d.ultRevKm != null && d.ultRevKm > kmAtual) {
+      throw new Error('KM da última revisão (' + fmtInt_(d.ultRevKm) + ') maior que o KM atual da moto (' + fmtInt_(kmAtual) + '). Confira os números.');
+    }
+    var t = frotaTable_(c.ss);
+    var o = { id: d.id, modelo: d.modelo, placa: d.placa, entregador: d.entregador, kmInicial: d.kmInicial == null ? '' : d.kmInicial,
+      ultRevKm: d.ultRevKm == null ? '' : d.ultRevKm, ultRevData: d.ultRevData || '', inicio: d.inicio || (alvo ? '' : parseDate_(c.today)) };
+    // Mudou a base da revisão: a próxima volta a ser calculada pelo intervalo da aba Configurações.
+    if (alvo && alvo.proxRevKmPlanilha != null && (alvo.ultRevKm !== d.ultRevKm || alvo.kmInicial !== d.kmInicial)) o.proxRevKm = '';
+    var row = alvo ? alvo.row : proxLinhaFrota_(t);
+    escreveFrota_(t, row, o);
+    return { ok: true, id: d.id, msg: (alvo ? 'Moto atualizada: ' : 'Moto cadastrada: ') + d.id + '.' };
+  });
+}
+
+/** Exclui a moto da aba Frota. Só se ela não tiver nenhum lançamento (para não deixar histórico órfão). */
+function deleteMoto(id) {
+  return withLock_(function () {
+    var c = ctx_();
+    var f = c.frota.filter(function (x) { return x.id === id; })[0];
+    if (!f) throw new Error('Moto não encontrada. Atualize a tela.');
+    var n = lancamentosPorMoto_(c)[id] || 0;
+    if (n) throw new Error('A ' + id + ' tem ' + n + ' lançamento(s) e não pode ser excluída. Se ela saiu da frota, apague a linha na aba Frota da planilha.');
+    frotaTable_(c.ss).sheet.deleteRow(f.row);
+    return { ok: true, msg: 'Moto excluída: ' + id + '.' };
+  });
+}
+
+function proxLinhaFrota_(t) {
+  var sh = t.sheet, last = sh.getLastRow(), row = 2;
+  if (last >= 2) {
+    var ids = sh.getRange(2, t.idx.id + 1, last - 1, 1).getValues();
+    for (var i = ids.length - 1; i >= 0; i--) if (String(ids[i][0]).trim()) { row = i + 3; break; }
+  }
+  if (row > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), 20);
+  return row;
+}
+
+/** Grava os campos na linha, sem apagar fórmulas que a aba já tenha. */
+function escreveFrota_(t, row, o) {
+  var sh = t.sheet;
+  var range = sh.getRange(row, 1, 1, t.lastCol);
+  var cur = range.getValues()[0], f = range.getFormulas()[0];
+  var out = cur.map(function (v, i) { return f[i] || v; });
+  var datas = [];
+  Object.keys(o).forEach(function (k) {
+    var i = t.idx[k];
+    if (i == null || f[i]) return;
+    out[i] = o[k];
+    if ((k === 'inicio' || k === 'ultRevData') && o[k]) datas.push(i);
+  });
+  range.setValues([out]);
+  datas.forEach(function (i) { sh.getRange(row, i + 1).setNumberFormat('dd/mm/yyyy'); });
+  SpreadsheetApp.flush();
 }
 
 function registrarRevisaoFrota_(c, moto, km, data) {
@@ -1111,9 +1765,13 @@ function statusOptions_(reg) {
 }
 
 /** Turnos com KM início e sem KM fim (últimos 7 dias; os mais antigos vão para pendências). */
-function openShifts_(rows, today) {
+function openRows_(rows, today) {
   var min = addDaysKey_(today, -7);
-  return rows.filter(function (r) { return r.kmIni != null && r.kmFim == null && r.key && r.key >= min; }).map(publicRow_).reverse();
+  return rows.filter(function (r) { return r.kmIni != null && r.kmFim == null && r.key && r.key >= min; });
+}
+
+function openShifts_(rows, today) {
+  return openRows_(rows, today).map(publicRow_).reverse();
 }
 
 function publicRow_(r) {
@@ -1214,27 +1872,53 @@ function table_(ss, key) {
 var __cache = {};
 function ss_cache_(ss) { var id = ss.getId(); return __cache[id] = __cache[id] || {}; }
 
+/** Linhas da aba. Colunas de link vêm vazias (ou com a URL, se estiver escrita como texto): use tableLinks_ para as que forem aparecer. */
 function rows_(t) {
   var sh = t.sheet, n = sh.getLastRow() - 1;
   if (n < 1) return [];
   var vals = sh.getRange(2, 1, n, t.lastCol).getValues();
-  var links = {};
-  t.schema.forEach(function (c) {
-    if (c[2] !== 'link') return;
-    links[c[0]] = sh.getRange(2, t.idx[c[0]] + 1, n, 1).getRichTextValues().map(function (r) { return (r[0] && r[0].getLinkUrl()) || ''; });
-  });
   var out = [];
   vals.forEach(function (v, r) {
     if (!v.some(function (x) { return x !== '' && x != null; })) return;
     var o = { _row: r + 2 };
     t.schema.forEach(function (c) {
       var x = v[t.idx[c[0]]];
-      if (c[2] === 'link') x = links[c[0]][r] || (/^https?:/.test(String(x)) ? String(x) : '');
+      if (c[2] === 'link') x = /^https?:/.test(String(x)) ? String(x) : '';
       o[c[0]] = x;
     });
     out.push(o);
   });
   return out;
+}
+
+/**
+ * Preenche os links (células "📎 Abrir") só das linhas da lista, numa leitura só:
+ * o retângulo entre a primeira e a última linha pedida, nas colunas de link.
+ */
+function fillLinks_(sheet, idx, keys, list, rowKey) {
+  var cols = keys.filter(function (k) { return idx[k] != null; });
+  var alvo = list.filter(function (o) { return o && o[rowKey] > 1; });
+  if (!cols.length || !alvo.length) return list;
+  var nums = alvo.map(function (o) { return o[rowKey]; });
+  var ci = cols.map(function (k) { return idx[k]; });
+  var r0 = Math.min.apply(null, nums), r1 = Math.max.apply(null, nums);
+  var c0 = Math.min.apply(null, ci), c1 = Math.max.apply(null, ci);
+  var rt = sheet.getRange(r0, c0 + 1, r1 - r0 + 1, c1 - c0 + 1).getRichTextValues();
+  alvo.forEach(function (o) {
+    cols.forEach(function (k) {
+      var cell = rt[o[rowKey] - r0][idx[k] - c0];
+      var url = cell && cell.getLinkUrl();
+      if (url) o[k] = url;
+    });
+  });
+  return list;
+}
+
+function regLinks_(reg, list) { return fillLinks_(reg.sheet, reg.idx, REG_LINKS, list, 'row'); }
+
+function tableLinks_(t, list, rowKey) {
+  var keys = t.schema.filter(function (c) { return c[2] === 'link'; }).map(function (c) { return c[0]; });
+  return fillLinks_(t.sheet, t.idx, keys, list, rowKey || '_row');
 }
 
 function writeObj_(t, row, obj) {
@@ -1264,16 +1948,84 @@ function append_(t, obj) {
 
 /* ============================== ARQUIVOS NO DRIVE ============================== */
 
+/*
+ * Regras da pasta de arquivos (fotos e documentos):
+ * - A pasta oficial fica no Drive do DONO da planilha. Só a conta dona cria ou troca a pasta oficial.
+ *   (Antes, quem não tinha acesso à pasta acabava criando uma pasta no próprio Drive e o app passava a usar
+ *   essa pasta para todo mundo — as fotos ficavam espalhadas e o dono sem acesso.)
+ * - Quem ainda não tem acesso à pasta oficial salva num "plano B": uma pasta no próprio Drive, já compartilhada
+ *   com o dono, e recebe um aviso. O acesso é liberado sozinho quando o dono abre o app (ou pelo menu).
+ */
+var __dono = null, __root = undefined, __avisoPasta = false;
+
+/** E-mail do dono da planilha ('' se o Google não informar). */
+function emailDono_(ss) {
+  if (__dono === null) { try { var o = ss.getOwner(); __dono = (o && o.getEmail()) || ''; } catch (e) { __dono = ''; } }
+  return __dono;
+}
+function souDono_(ss) { var d = emailDono_(ss); return !d || d === userEmail_(); }
+
+/** A pasta oficial tem que ser do dono da planilha (pasta criada no Drive de outra pessoa não vale). */
+function pastaDoDono_(f, ss) {
+  var d = emailDono_(ss);
+  if (!d) return true;
+  try { var o = f.getOwner(), e = o && o.getEmail(); return !e || e === d; } catch (x) { return true; }
+}
+
+/** Pasta oficial, ou null se esta conta não tem acesso a ela (e não é a dona). */
 function rootFolder_(ss) {
+  if (__root !== undefined) return __root;
   var props = PropertiesService.getScriptProperties();
   var id = props.getProperty(PROP_ROOT);
-  if (id) { try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (e) { /* recria */ } }
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed() && pastaDoDono_(f, ss)) return (__root = f); } catch (e) { /* sem acesso ou apagada */ }
+  }
+  if (!souDono_(ss)) return (__root = null); // nunca cria nem troca a pasta oficial fora da conta dona
   var parent;
   try { var ps = DriveApp.getFileById(ss.getId()).getParents(); parent = ps.hasNext() ? ps.next() : DriveApp.getRootFolder(); }
   catch (e) { parent = DriveApp.getRootFolder(); }
   var folder = subFolder_(parent, ROOT_FOLDER_NAME);
   props.setProperty(PROP_ROOT, folder.getId());
-  return folder;
+  return (__root = folder);
+}
+
+/** Plano B para quem ainda não tem acesso à pasta oficial: pasta no próprio Drive, compartilhada com o dono. */
+function pastaPendente_(ss) {
+  __avisoPasta = true;
+  var pasta = subFolder_(DriveApp.getRootFolder(), 'Frota Polaris — arquivos aguardando liberação');
+  var d = emailDono_(ss);
+  if (d && d !== userEmail_()) {
+    try { if (!pasta.getEditors().some(function (u) { return u.getEmail() === d; })) pasta.addEditor(d); } catch (e) { /* segue: a foto foi salva */ }
+  }
+  return pasta;
+}
+
+/** Subpasta guardada pelo ID, mas só se ainda estiver dentro da pasta-mãe certa. */
+function pastaFilha_(pai, nome, chave) {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty(chave);
+  if (id) {
+    try {
+      var f = DriveApp.getFolderById(id);
+      if (!f.isTrashed()) { var it = f.getParents(); while (it.hasNext()) if (it.next().getId() === pai.getId()) return f; }
+    } catch (e) { /* sem acesso, apagada ou fora do lugar */ }
+  }
+  var nova = subFolder_(pai, nome);
+  props.setProperty(chave, nova.getId());
+  return nova;
+}
+
+/** Quando o dono abre o app: dá acesso à pasta para quem entrou na planilha (no máximo a cada 30 min). */
+function sincronizaPasta_(ss) {
+  try {
+    if (!emailDono_(ss) || !souDono_(ss)) return;
+    rootFolder_(ss); // dono: confere (e conserta, se preciso) qual é a pasta oficial
+    var props = PropertiesService.getScriptProperties(), agora = Date.now();
+    var ultima = +(props.getProperty('PASTA_SYNC') || 0);
+    if (agora - ultima < 30 * 60 * 1000) return;
+    props.setProperty('PASTA_SYNC', String(agora));
+    compartilharPasta();
+  } catch (e) { /* não atrapalha a abertura do app */ }
 }
 
 function folderUrlSafe_(ss) {
@@ -1286,11 +2038,24 @@ function subFolder_(parent, name) {
   return it.hasNext() ? it.next() : parent.createFolder(name);
 }
 
-/** Foto de painel/cupom/nota → pasta Fotos/aaaa-mm. */
+/**
+ * Pasta Fotos/aaaa-mm dentro da pasta oficial (null se esta conta ainda não tem acesso a ela).
+ * Os IDs ficam guardados (evita procurar por nome a cada foto) e são conferidos pela pasta-mãe.
+ */
+var __pastasFotos = {};
+function photoFolder_(ss, mes) {
+  if (__pastasFotos[mes] !== undefined) return __pastasFotos[mes];
+  var root = rootFolder_(ss);
+  if (!root) return (__pastasFotos[mes] = null);
+  var fotos = pastaFilha_(root, 'Fotos', 'PASTA_FOTOS_' + ss.getId());
+  return (__pastasFotos[mes] = pastaFilha_(fotos, mes, 'PASTA_MES_' + ss.getId() + '_' + mes));
+}
+
+/** Foto de painel/cupom/nota → pasta Fotos/aaaa-mm (ou o plano B, se a pasta ainda não foi liberada). */
 function savePhoto_(ss, foto, data, nomeBase) {
   var tz = ss.getSpreadsheetTimeZone();
   var dia = Utilities.formatDate(data, tz, 'yyyy-MM-dd');
-  var folder = subFolder_(subFolder_(rootFolder_(ss), 'Fotos'), dia.slice(0, 7));
+  var folder = photoFolder_(ss, dia.slice(0, 7)) || pastaPendente_(ss);
   var nome = dia + '_' + Utilities.formatDate(new Date(), tz, 'HHmm') + '_' + nomeBase + '.' + extFromMime_(foto && foto.mime);
   return saveFile_(foto, folder, nome, ['image/jpeg', 'image/png', 'image/webp']);
 }
@@ -1314,7 +2079,12 @@ function extFromMime_(mime) {
 function withLock_(fn) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error('Outra pessoa está salvando agora. Tente de novo em alguns segundos.');
-  try { return fn(); } finally { lock.releaseLock(); }
+  try {
+    var res = fn();
+    // Foto/documento foi para o plano B: avisa quem lançou.
+    if (__avisoPasta && res && res.msg) res.msg += ' ⚠️ Sua conta ainda não tem acesso à pasta de fotos: o arquivo ficou no seu Drive, já compartilhado com o dono da planilha. Peça ao dono para abrir o app (libera sozinho) ou usar Frota Polaris → Liberar pasta de fotos.';
+    return res;
+  } finally { lock.releaseLock(); }
 }
 
 function userEmail_() {
@@ -1367,9 +2137,22 @@ function parseDate_(v) {
   return null;
 }
 
-function dateKey_(d, tz) { return Utilities.formatDate(d, tz, 'yyyy-MM-dd'); }
-function fmtDate_(d, tz) { return Utilities.formatDate(d, tz, 'dd/MM/yyyy'); }
+// A planilha repete as mesmas datas em muitas linhas: guarda cada conversão já feita nesta execução.
+var __datas = {};
+function fmtMemo_(d, tz, padrao) {
+  var k = padrao + '|' + tz + '|' + d.getTime();
+  var v = __datas[k];
+  if (v === undefined) v = __datas[k] = Utilities.formatDate(d, tz, padrao);
+  return v;
+}
+function dateKey_(d, tz) { return fmtMemo_(d, tz, 'yyyy-MM-dd'); }
+function fmtDate_(d, tz) { return fmtMemo_(d, tz, 'dd/MM/yyyy'); }
 function hora_(tz) { return Utilities.formatDate(new Date(), tz, 'HH:mm'); }
+/** "08:05" gravado pelo app às vezes volta da planilha como horário (data de 1899): devolve sempre "HH:mm". */
+function horaTxt_(v, tz) {
+  if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? '' : Utilities.formatDate(v, tz, 'HH:mm');
+  return String(v == null ? '' : v);
+}
 function fmtKey_(k) { return k ? k.slice(8, 10) + '/' + k.slice(5, 7) : ''; }
 function pad3_(n) { return ('00' + n).slice(-3); }
 

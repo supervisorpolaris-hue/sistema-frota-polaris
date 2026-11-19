@@ -23,6 +23,7 @@
       <div class="logo-word" id="top-word" aria-hidden="true"></div>
       <h1 id="top-title" hidden></h1>
       <div class="sp" id="top-sp"></div>
+      <span class="sync" id="sync" role="status" title="Atualizando os dados…" hidden><span class="spin"></span></span>
       <a class="icon-btn" id="sheet-link" target="_blank" rel="noopener" href="#" title="Abrir planilha"><svg class="i" data-i="sheet"></svg></a>
     </div>
   </header>
@@ -74,8 +75,8 @@
         <p class="form-title">Saída da moto</p>
         <div class="fields two">
           <div class="field full"><span class="lb">Moto <span class="req">*</span></span><div class="opts" data-motos></div><div data-moto-alert></div></div>
-          <div class="field"><label for="s-ent">Entregador <span class="req">*</span></label><input id="s-ent" name="entregador" list="dl-ent" placeholder="Digite ou escolha"></div>
-          <div class="field"><label for="s-turno">Turno <span class="req">*</span></label><input id="s-turno" name="turno" list="dl-turnos" placeholder="ex.: 11h-17h"><div class="opts" data-turnos></div></div>
+          <div class="field"><label for="s-ent">Entregador <span class="req">*</span></label><select id="s-ent" name="entregador" data-ent></select><p class="hint" data-hint="ent"></p></div>
+          <div class="field"><span class="lb">Turno <span class="req">*</span></span><input id="s-turno" name="turno" type="hidden"><div class="opts" data-turnos></div><p class="hint" data-hint="turno"></p></div>
           <div class="field"><label for="s-kmIni">KM de saída <span class="req">*</span></label>
             <div class="photo" data-photo="s-ini"><div class="input-row"><input id="s-kmIni" name="kmIni" type="number" inputmode="numeric" min="0" step="1" data-autokm>
               <label class="photo-btn"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto</span></label></div>
@@ -103,8 +104,8 @@
         <div class="fields two">
           <div class="field full"><span class="lb">Moto <span class="req">*</span></span><div class="opts" data-motos></div></div>
           <div class="field"><label for="c-data">Data <span class="req">*</span></label><input id="c-data" name="data" type="date"></div>
-          <div class="field"><label for="c-ent">Entregador <span class="req">*</span></label><input id="c-ent" name="entregador" list="dl-ent"></div>
-          <div class="field"><label for="c-turno">Turno <span class="req">*</span></label><input id="c-turno" name="turno" list="dl-turnos"><div class="opts" data-turnos></div></div>
+          <div class="field"><label for="c-ent">Entregador <span class="req">*</span></label><select id="c-ent" name="entregador" data-ent></select><p class="hint" data-hint="ent"></p></div>
+          <div class="field"><span class="lb">Turno <span class="req">*</span></span><input id="c-turno" name="turno" type="hidden"><div class="opts" data-turnos></div></div>
           <div class="field"><label for="c-kmIni">KM de saída <span class="req">*</span></label>
             <div class="photo" data-photo="c-ini"><div class="input-row"><input id="c-kmIni" name="kmIni" type="number" inputmode="numeric" min="0" step="1" data-autokm>
               <label class="photo-btn"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto</span></label></div>
@@ -145,7 +146,7 @@
             <div class="seg" id="a-cheio"><button type="button" data-v="1" aria-pressed="true">Sim, completei</button><button type="button" data-v="0">Não</button></div>
             <div class="hint">Tanque cheio permite calcular o consumo real (km/l).</div></div>
           <div class="field"><label for="a-posto">Posto</label><input id="a-posto" name="posto" list="dl-postos"></div>
-          <div class="field"><label for="a-ent">Entregador</label><input id="a-ent" name="entregador" list="dl-ent"></div>
+          <div class="field"><label for="a-ent">Entregador</label><select id="a-ent" name="entregador" data-ent data-vazio="— nenhum —"></select><p class="hint" data-hint="ent"></p></div>
           <div class="field"><label for="a-data">Data</label><input id="a-data" name="data" type="date"></div>
           <div class="field"><span class="lb">Cupom fiscal</span>
             <div class="photo" data-photo="a-cupom"><label class="photo-btn" style="width:100%"><input type="file" accept="image/*" capture="environment"><svg class="i" data-i="camera"></svg><span class="lbl">Foto do cupom</span></label>
@@ -213,7 +214,7 @@
       <div class="menu">
         <button type="button" data-go="receita"><span class="ico"><svg class="i" data-i="money"></svg></span><span>Receita do dia<small>Lançar quanto entrou</small></span><svg class="i chev" data-i="chev"></svg></button>
         <button type="button" data-go="manutencao"><span class="ico"><svg class="i" data-i="wrench"></svg></span><span>Manutenção<small>Revisão, óleo, pneu, peças</small></span><svg class="i chev" data-i="chev"></svg></button>
-        <button type="button" data-go="motos"><span class="ico"><svg class="i" data-i="moto"></svg></span><span>Motos<small>KM, revisões e custos</small></span><svg class="i chev" data-i="chev"></svg></button>
+        <button type="button" data-go="motos"><span class="ico"><svg class="i" data-i="moto"></svg></span><span>Motos<small>Cadastro, KM, revisões e custos</small></span><svg class="i chev" data-i="chev"></svg></button>
       </div>
       <div class="menu" style="margin-top:14px">
         <a id="m-sheet" target="_blank" rel="noopener" href="#"><span class="ico"><svg class="i" data-i="sheet"></svg></span><span>Abrir planilha<small>Ver e corrigir os dados</small></span><svg class="i chev" data-i="chev"></svg></a>
@@ -263,7 +264,36 @@
 
     <!-- ======================= MOTOS ======================= -->
     <section class="view" data-view="motos" data-title="Motos" data-sub hidden>
+      <div class="input-row" style="margin-bottom:12px;justify-content:flex-end">
+        <button type="button" class="btn primary" style="flex:none" data-go="moto"><svg class="i" data-i="plus"></svg>Nova moto</button>
+      </div>
       <div class="motos" id="motos-list"><div class="skeleton"></div></div>
+    </section>
+
+    <!-- ======================= CADASTRO DE MOTO ======================= -->
+    <section class="view" data-view="moto" data-title="Moto" data-sub hidden>
+      <form id="f-moto" class="card" novalidate autocomplete="off">
+        <p class="form-title" id="mo-title">Nova moto</p>
+        <input type="hidden" name="original">
+        <div class="fields two">
+          <div class="field"><label for="mo-id">Identificação <span class="req">*</span></label><input id="mo-id" name="motoId" maxlength="30" placeholder="ex.: MOTO 01"><p class="hint" id="mo-id-hint">Nome que aparece na Saída, no Abastecer e no painel.</p></div>
+          <div class="field"><label for="mo-placa">Placa</label><input id="mo-placa" name="placa" maxlength="8" placeholder="ABC1D23" autocapitalize="characters"></div>
+          <div class="field"><label for="mo-modelo">Modelo</label><input id="mo-modelo" name="modelo" list="dl-modelos" placeholder="ex.: CG 160"></div>
+          <div class="field"><label for="mo-ent">Entregador vinculado</label><select id="mo-ent" name="entregador" data-ent data-vazio="Nenhum (sem piloto fixo)"></select></div>
+          <div class="field"><label for="mo-km" id="mo-km-lb">KM atual (do painel) <span class="req">*</span></label><input id="mo-km" name="kmInicial" type="number" inputmode="numeric" min="0" step="1"><p class="hint" id="mo-km-hint"></p></div>
+          <div class="field"><label for="mo-inicio">Início de uso</label><input id="mo-inicio" name="inicio" type="date"></div>
+        </div>
+        <p class="form-title" style="margin-top:22px">Última revisão</p>
+        <div class="fields two">
+          <div class="field"><label for="mo-revkm">KM da última revisão</label><input id="mo-revkm" name="ultRevKm" type="number" inputmode="numeric" min="0" step="1" placeholder="se souber"><p class="hint" id="mo-rev-hint"></p></div>
+          <div class="field"><label for="mo-revdata">Data da última revisão</label><input id="mo-revdata" name="ultRevData" type="date"></div>
+        </div>
+        <div class="note" id="mo-prox" style="margin-top:12px" hidden></div>
+        <div class="actions">
+          <button type="submit" class="btn primary"><svg class="i" data-i="check"></svg>Salvar moto</button>
+          <button type="button" class="btn ghost" id="mo-excluir" hidden>Excluir moto</button>
+        </div>
+      </form>
     </section>
 
     <div id="noaccess" class="noaccess" hidden>
@@ -313,6 +343,7 @@
   <datalist id="dl-resp"></datalist>
   <datalist id="dl-oco"></datalist>
   <datalist id="dl-postos"></datalist>
+  <datalist id="dl-modelos"></datalist>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 

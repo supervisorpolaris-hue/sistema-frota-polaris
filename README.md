@@ -57,6 +57,8 @@ Os detalhes estão em [`apps-script/LEIA-ME.md`](apps-script/LEIA-ME.md).
 
 Para trabalhar no projeto em outro computador (clonar, alterar, enviar e publicar), veja [`GUIA-OUTRA-MAQUINA.md`](GUIA-OUTRA-MAQUINA.md).
 
+**Atualização automática:** com a configuração de [`ATUALIZACAO-AUTOMATICA.md`](ATUALIZACAO-AUTOMATICA.md), toda alteração aprovada na `main` passa pelos testes (`tests/`, simulador da planilha com dados fictícios) e é publicada sozinha no Apps Script, no mesmo link. Para rodar os testes no computador: `node tests/rodar-testes.js`.
+
 ## Segurança
 
 O app roda com a conta de quem o abre. Por isso, **só quem tem acesso à planilha consegue usar o app**, e os documentos dos entregadores ficam protegidos pelo compartilhamento do Google Drive. O código não guarda senhas, chaves nem IDs de planilha: o ID é salvo nas propriedades do script quando `configurar` roda.

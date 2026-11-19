@@ -58,6 +58,9 @@
     display: inline-flex; align-items: center; justify-content: center; cursor: pointer; text-decoration: none; flex: none;
   }
   .icon-btn:hover { background: var(--surface-2); }
+  .sync { display: inline-flex; align-items: center; flex: none; }
+  .sync[hidden] { display: none; }
+  .sync .spin { width: 16px; height: 16px; margin-right: 0; }
 
   main { max-width: 1040px; margin: 0 auto; padding: 14px 14px 8px; }
   section.view { animation: fade .18s ease; }
@@ -134,7 +137,8 @@
   .person { display: inline-flex; align-items: center; gap: 8px; background: var(--surface); border-radius: 999px; padding: 5px 12px 5px 5px; box-shadow: var(--shadow); font-size: 13px; font-weight: 600; }
   .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--soft); color: var(--accent); font-weight: 800; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
   .person .st { font-size: 11px; font-weight: 700; }
-  .person .st.on { color: var(--good); } .person .st.off { color: var(--muted); }
+  .person .st.on { color: var(--good); } .person .st.off { color: var(--muted); } .person .st.late { color: var(--crit); }
+  .person small { font-size: 11px; font-weight: 600; }
 
   /* seletor de período / segmentos */
   .seg { display: flex; background: #ece6e0; border-radius: 12px; padding: 3px; gap: 2px; overflow-x: auto; }
@@ -264,6 +268,7 @@
   }
   .photo-btn input { display: none; }
   .photo.has .photo-btn { border-style: solid; }
+  .photo.obrig:not(.has) .lbl::after { content: ' *'; color: var(--crit); }
   .photo-prev { position: relative; margin-top: 8px; }
   .photo-prev img { display: block; width: 100%; max-height: 200px; object-fit: contain; background: #111; border-radius: 12px; cursor: zoom-in; }
   .photo-prev .x { position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .65); color: #fff; cursor: pointer; font-size: 15px; }
