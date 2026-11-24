@@ -4,7 +4,8 @@
 
   var S = {
     app: null, dash: null, period: '7', view: 'inicio', history: [], photos: {}, closing: null,
-    turnoMode: 'saida', drivers: null, eqFilter: 'ativos', driver: null, dashStale: true, driversStale: true, metric: 'corridas'
+    turnoMode: 'saida', drivers: null, eqFilter: 'ativos', driver: null, dashStale: true, driversStale: true, metric: 'corridas',
+    homeSeq: 0, homeBusy: false
   };
   var $ = function (s, el) { return (el || document).querySelector(s); };
   var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
@@ -140,7 +141,7 @@
 
   /* ============================== navegação ============================== */
 
-  var PARENT = { entregador: 'equipe', receita: 'mais', manutencao: 'mais', motos: 'mais' };
+  var PARENT = { entregador: 'equipe', receita: 'mais', folga: 'mais', manutencao: 'mais', motos: 'mais', moto: 'motos' };
   var ENTER = {};
 
   function go(view, opts, fromBack) {
@@ -167,13 +168,52 @@
 
   /* ============================== carregamento ============================== */
 
-  function loadApp() {
-    return run('getApp').then(function (a) { S.app = a; renderApp(); })
-      .catch(function (e) {
-        var m = errMsg(e);
-        if (/SEM_ACESSO|permiss|access/i.test(e && e.message || '')) { showNoAccess(m); return; }
-        toast('Erro ao carregar: ' + m, true);
-      }).then(hideSplash);
+  // Os últimos dados recebidos ficam guardados no aparelho: o app abre na hora com eles e
+  // atualiza por trás. Só vale no mesmo dia, para não sugerir a data de ontem nos formulários.
+  var CACHE = 'frota.home.v2';
+  function hojeLocal() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function readCache() {
+    try {
+      var h = JSON.parse(localStorage.getItem(CACHE) || 'null');
+      return h && h.app && h.app.today === hojeLocal() ? h : null;
+    } catch (e) { return null; }
+  }
+  function writeCache(h) { try { localStorage.setItem(CACHE, JSON.stringify(h)); } catch (e) { /* sem espaço: segue sem guardar */ } }
+  function clearCache() { try { localStorage.removeItem(CACHE); } catch (e) { /* nada */ } }
+  function setSync(on) { var s = $('#sync'); if (s) s.hidden = !on; }
+
+  /** Telas + painel numa chamada só ao servidor (antes eram duas, uma depois da outra). */
+  function loadHome() {
+    var seq = ++S.homeSeq;
+    S.homeBusy = true; setSync(true);
+    return run('getHome', S.period).then(function (h) {
+      if (seq !== S.homeSeq) return; // já pediram uma atualização mais nova
+      S.app = h.app; renderApp();
+      if (h.dash && h.dash.period === S.period) {
+        S.dash = h.dash; S.dashStale = false; $('#dash').style.opacity = ''; renderDash();
+        if (S.view === 'motos') renderMotosView();
+      } else S.dashStale = true;
+      writeCache({ app: h.app, dash: h.dash });
+    }).catch(function (e) {
+      if (seq !== S.homeSeq) return;
+      var m = errMsg(e);
+      if (/SEM_ACESSO|permiss|access/i.test(e && e.message || '')) { clearCache(); showNoAccess(m); return; }
+      toast('Erro ao carregar: ' + m, true);
+    }).then(function () {
+      if (seq === S.homeSeq) { S.homeBusy = false; setSync(false); }
+      hideSplash();
+    });
+  }
+
+  /** Abre na hora com os dados guardados (se houver) e busca os atuais. */
+  function start() {
+    var h = readCache();
+    if (h) {
+      S.app = h.app; renderApp();
+      if (h.dash && h.dash.period === S.period) { S.dash = h.dash; renderDash(); }
+      hideSplash();
+    }
+    return loadHome();
   }
   function hideSplash() { var s = $('#splash'); if (!s || s.classList.contains('out')) return; s.classList.add('out'); setTimeout(function () { s.remove(); }, 400); }
   function showNoAccess(msg) {
@@ -182,24 +222,41 @@
     $('#noaccess').hidden = false;
     $('#noaccess-msg').textContent = msg;
   }
-  function refresh() { S.dashStale = true; S.driversStale = true; return loadApp().then(function () { if (S.view === 'inicio') loadDash(); }); }
+  function refresh() { S.dashStale = true; S.driversStale = true; return loadHome(); }
+
+  // Foto do KM obrigatória (aba Configurações: "Foto do KM obrigatória" = Sim/Não; sem a linha, é obrigatória).
+  function fotoObrig() { return !S.app || !S.app.config || S.app.config.fotoObrigatoria !== false; }
 
   function renderApp() {
     var a = S.app;
+    ['s-ini', 'r-fim', 'c-fim'].forEach(function (k) { var b = $('.photo[data-photo="' + k + '"]'); if (b) b.classList.toggle('obrig', fotoObrig()); });
     $('#sheet-link').href = a.sheetUrl; $('#m-sheet').href = a.sheetUrl;
     if (a.folderUrl) $('#m-folder').href = a.folderUrl; else $('#m-folder').hidden = true;
     $('#m-user').textContent = a.user ? 'Conectado como ' + a.user : '';
     var dl = function (id, list) { $(id).innerHTML = list.map(function (n) { return '<option value="' + esc(n) + '">'; }).join(''); };
     dl('#dl-ent', a.entregadores); dl('#dl-turnos', a.turnos); dl('#dl-resp', a.responsaveis);
     dl('#dl-oco', ['TUDO OK'].concat(a.ocorrencias.filter(function (o) { return o !== 'TUDO OK'; }))); dl('#dl-postos', a.postos);
+    dl('#dl-modelos', (a.frota || []).map(function (m) { return m.modelo; }).filter(function (x, i, l) { return x && l.indexOf(x) === i; }));
+    // Turnos fixos (aba Configurações) viram os únicos botões; entregador só da lista do cadastro.
+    var turnos = turnosFixos().length ? turnosFixos().map(function (t) { return t.nome; }) : a.turnos.slice(0, 5);
     $$('[data-turnos]').forEach(function (el) {
-      el.innerHTML = a.turnos.slice(0, 5).map(function (t) { return '<button type="button" class="opt sm" data-turno="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
+      el.innerHTML = turnos.map(function (t) { return '<button type="button" class="opt" data-turno="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
+      marcaTurno(el.closest('form'));
     });
+    $$('select[data-ent]').forEach(function (sel) {
+      var antes = sel.value, vazio = sel.dataset.vazio || (a.entregadores.length ? 'Escolha o entregador' : 'Cadastre em Equipe primeiro');
+      sel.innerHTML = '<option value="">' + esc(vazio) + '</option>' + a.entregadores.map(function (n) { return '<option>' + esc(n) + '</option>'; }).join('');
+      if (antes && a.entregadores.indexOf(antes) >= 0) sel.value = antes;
+    });
+    // renderApp roda de novo a cada atualização: mantém o que a pessoa já escolheu nos formulários.
     $$('select[data-status]').forEach(function (sel) {
+      var antes = sel.options.length ? sel.value : null;
       sel.innerHTML = a.statusOptions.map(function (o) { return '<option>' + esc(o) + '</option>'; }).join('');
-      sel.value = a.statusOptions.filter(function (o) { return /FINAL|DEVOL|DISPON|PARAD|RECOLH|GARAG/i.test(o); })[0] || a.statusOptions[0];
+      sel.value = antes && a.statusOptions.indexOf(antes) >= 0 ? antes :
+        a.statusOptions.filter(function (o) { return /FINAL|DEVOL|DISPON|PARAD|RECOLH|GARAG/i.test(o); })[0] || a.statusOptions[0];
     });
-    $('#m-tipos').innerHTML = a.manutTipos.map(function (t) { return '<button type="button" class="opt sm" data-tipo="' + esc(t) + '">' + esc(t) + '</button>'; }).join('');
+    var tipoSel = $('#f-manut').dataset.tipo || '';
+    $('#m-tipos').innerHTML = a.manutTipos.map(function (t) { return '<button type="button" class="opt sm" data-tipo="' + esc(t) + '" aria-pressed="' + (t === tipoSel) + '">' + esc(t) + '</button>'; }).join('');
     $$('form').forEach(function (f) { renderMotoChips(f); });
     $$('input[type=date]').forEach(function (i) { if (!i.value && i.name === 'data') i.value = a.today; });
     ['#s-rec', '#c-rec', '#c-dev', '#r-dev'].forEach(function (id) { var i = $(id); if (i && !i.value) i.value = store('resp'); });
@@ -213,7 +270,7 @@
     var dt = kdate(a.today).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
     $('#h-date').textContent = dt.charAt(0).toUpperCase() + dt.slice(1);
 
-    renderRua(); renderTurnos(); renderFuel(); renderRec(); renderManut();
+    renderRua(); renderTurnos(); renderFuel(); renderRec(); renderManut(); renderFolgas();
   }
 
   /* ============================== motos nos formulários ============================== */
@@ -223,6 +280,10 @@
   function renderMotoChips(form) {
     var box = $('[data-motos]', form);
     if (!box || !S.app) return;
+    if (!S.app.motos.length) {
+      box.innerHTML = '<div class="note">Nenhuma moto cadastrada ainda. <button type="button" class="btn sm ghost" data-go="moto">' + icon('plus') + 'Cadastrar moto</button></div>';
+      return;
+    }
     var sel = form.dataset.moto || '';
     box.innerHTML = S.app.motos.map(function (m) {
       var sub = m.open ? '● na rua' : m.lastKm != null ? nf(m.lastKm) + ' km' : 'sem KM';
@@ -237,12 +298,75 @@
       if (m && m.lastKm != null && (inp.value === '' || inp.dataset.auto === '1')) { inp.value = m.lastKm; inp.dataset.auto = '1'; }
     });
     kmHint(form);
+    sugerir(form, m);
     var al = $('[data-moto-alert]', form);
     if (al) {
       al.innerHTML = m && m.open ? '<div class="note" style="margin-top:8px">Esta moto já está na rua com <b>' + esc(m.open.entregador) + '</b> (' + esc(m.open.turno) +
         ', desde ' + esc(m.open.dataFmt) + '). <button type="button" class="btn sm ghost" data-ret="' + m.open.row + '">Registrar retorno</button></div>' : '';
     }
   }
+  /* Saída rápida: ao tocar na moto, sugere entregador e turno (sem apagar o que a pessoa já digitou). */
+  function setHint(form, k, txt) { var h = $('[data-hint="' + k + '"]', form); if (h) h.textContent = txt; }
+  function turnosFixos() { return (S.app && S.app.config && S.app.config.turnos) || []; }
+  function marcaTurno(form) {
+    if (!form) return;
+    var tu = field(form, 'turno'), v = tu ? tu.value : '';
+    $$('[data-turno]', form).forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.turno === v); });
+  }
+  /** Turno sugerido pela hora: o de início mais próximo, entre os que começam em até 2 h ou já estão em andamento. */
+  function turnoPelaHora() {
+    var d = new Date(), agora = d.getHours() * 60 + d.getMinutes(), best = null, fixos = turnosFixos();
+    var lista = fixos.length ? fixos.map(function (t) { return { turno: t.nome, min: t.ini, fim: t.fim <= t.ini ? t.fim + 1440 : t.fim }; })
+      : ((S.app && S.app.turnoHoras) || []).map(function (t) { return { turno: t.turno, min: t.min, fim: t.min + 120 }; });
+    lista.forEach(function (t) {
+      if (agora < t.min - 120 || agora >= t.fim) return;
+      var dif = Math.abs(t.min - agora);
+      if (!best || dif < best.dif) best = { turno: t.turno, min: t.min, dif: dif };
+    });
+    if (!best) return null;
+    best.hora = ('0' + Math.floor(best.min / 60)).slice(-2) + ':' + ('0' + best.min % 60).slice(-2);
+    return best;
+  }
+  function sugerir(form, m) {
+    if (!m) return;
+    var fid = form.getAttribute('id'), ent = field(form, 'entregador'), tur = field(form, 'turno');
+    if (ent && (ent.value === '' || form.dataset.autoEnt === '1')) {
+      // Na saída, não sugere quem já está na rua com outra moto.
+      var naRua = function (n) {
+        return fid !== 'f-abast' && (S.app.openShifts.some(function (o) { return normTxt(o.entregador) === normTxt(n); }) ||
+          (fid === 'f-saida' && (S.app.folgasHoje || []).some(function (x) { return normTxt(x) === normTxt(n); }))); // de folga hoje
+      };
+      var nome = '', motivo = '';
+      // Saída: primeiro quem está na escala de hoje para o turno deste horário e ainda não saiu
+      // (preferindo o vinculado à moto ou o último que usou), depois vinculado / último.
+      var th = fid === 'f-saida' ? turnoPelaHora() : null;
+      var escalados = th ? escalaHoje().filter(function (e) { return e.turno === th.turno && !e.saiu && !naRua(e.nome); }) : [];
+      var daMoto = escalados.filter(function (e) { return e.nome === m.vinculado; })[0] || escalados.filter(function (e) { return e.nome === m.ultimoEntregador; })[0];
+      if (fid === 'f-abast' && m.open && m.open.entregador) { nome = m.open.entregador; motivo = 'está com a moto agora'; }
+      else if (escalados.length) { nome = (daMoto || escalados[0]).nome; motivo = 'na escala de hoje (' + th.turno + ')'; }
+      else if (m.vinculado && !naRua(m.vinculado)) { nome = m.vinculado; motivo = 'vinculado à moto'; }
+      else if (m.ultimoEntregador && !naRua(m.ultimoEntregador)) { nome = m.ultimoEntregador; motivo = 'último a usar esta moto'; }
+      ent.value = nome;
+      if (ent.value !== nome) nome = ''; // nome fora da lista de cadastrados: não sugere
+      form.dataset.autoEnt = nome ? '1' : '';
+      setHint(form, 'ent', nome ? 'Sugerido: ' + motivo + '. Confira.' : '');
+    }
+    sugerirTurno(form);
+  }
+  function escalaHoje() { return (S.app && S.app.escalaHoje) || []; }
+  /** Turno da saída: o da escala de hoje do entregador escolhido; se ele não estiver na escala, pelo horário. */
+  function sugerirTurno(form) {
+    var tur = field(form, 'turno'), ent = field(form, 'entregador');
+    // Só na saída (o "turno completo" é lançado depois, em outro horário) e sem trocar o que a pessoa escolheu.
+    if (!tur || form.getAttribute('id') !== 'f-saida' || !(tur.value === '' || form.dataset.autoTurno === '1')) return;
+    var e = ent && ent.value ? escalaHoje().filter(function (x) { return x.nome === ent.value && x.turno; })[0] : null;
+    var t = e ? null : turnoPelaHora();
+    tur.value = e ? e.turno : t ? t.turno : '';
+    form.dataset.autoTurno = tur.value ? '1' : '';
+    setHint(form, 'turno', e ? 'Sugerido: turno da escala de hoje. Confira.' : t ? 'Sugerido pelo horário (turno começa às ' + t.hora + '). Confira.' : '');
+    marcaTurno(form);
+  }
+
   function kmHint(form) {
     var inp = $('[data-autokm]', form), h = $('[data-kmhint]', form);
     if (!inp || !h) return;
@@ -265,6 +389,10 @@
     $$('.check-opt', form).forEach(function (b) { b.setAttribute('aria-pressed', 'true'); });
     $$('[data-tipo]', form).forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
     delete form.dataset.tipo;
+    form.dataset.autoEnt = ''; form.dataset.autoTurno = '';
+    var tu = field(form, 'turno'); if (tu && tu.type === 'hidden') tu.value = ''; // reset() não limpa campo oculto
+    marcaTurno(form);
+    $$('[data-hint]', form).forEach(function (h) { h.textContent = ''; });
     ['recebido', 'devolvido'].forEach(function (n) { var i = field(form, n); if (i) i.value = store('resp'); });
     $$('select[data-status]', form).forEach(function (sel) {
       var a = S.app.statusOptions;
@@ -335,7 +463,8 @@
     $$('.check-opt', f).forEach(function (b) { check[b.dataset.check] = b.getAttribute('aria-pressed') === 'true'; });
     var p = { data: field(f, 'data').value || today(), moto: f.dataset.moto, entregador: field(f, 'entregador').value.trim(), turno: field(f, 'turno').value.trim(),
       kmIni: num(field(f, 'kmIni').value), recebido: field(f, 'recebido').value.trim(), checklist: check, fotoIni: photo('s-ini') };
-    var err = !p.moto ? 'Escolha a moto.' : !p.entregador ? 'Informe o entregador.' : !p.turno ? 'Informe o turno.' : p.kmIni == null ? 'Informe o KM de saída.' : null;
+    var err = !p.moto ? 'Escolha a moto.' : !p.entregador ? 'Escolha o entregador.' : !p.turno ? 'Escolha o turno.' : p.kmIni == null ? 'Informe o KM de saída.' :
+      fotoObrig() && !p.fotoIni ? 'Tire a foto do painel com o KM de saída.' : null;
     if (err) return toast(err, true);
     store('resp', p.recebido);
     send(f, 'openShift', p, p.fotoIni ? 'Enviando foto…' : null, function (res) {
@@ -343,6 +472,8 @@
     });
   }
 
+  // Depois de gravar, o botão é liberado na hora e a tela se atualiza por trás
+  // (antes o botão ficava travado até recarregar tudo).
   function send(form, fn, p, busyLabel, onErrRetry) {
     var btn = $('button[type=submit]', form);
     busy(btn, true, busyLabel);
@@ -350,10 +481,11 @@
       if (onErrRetry && onErrRetry(errMsg(e))) return run(fn, p);
       throw e;
     }).then(function (res) {
+      busy(btn, false);
       toast(res.msg);
       resetForm(form);
-      return refresh();
-    }).catch(function (e) { toast(errMsg(e), true); }).then(function () { busy(btn, false); });
+      refresh();
+    }).catch(function (e) { busy(btn, false); toast(errMsg(e), true); });
   }
 
   function openRet(row) {
@@ -377,15 +509,15 @@
     var p = { moto: o.moto, kmFim: num(field(f, 'kmFim').value), corridas: num(field(f, 'corridas').value), devolvido: field(f, 'devolvido').value.trim(),
       status: field(f, 'status').value, ocorrencia: field(f, 'ocorrencia').value.trim(), fotoFim: photo('r-fim') };
     var err = p.kmFim == null ? 'Informe o KM de retorno.' : p.kmFim < o.kmIni ? 'KM de retorno menor que o de saída (' + nf(o.kmIni) + ').' :
-      p.corridas == null ? 'Informe as corridas (0 se nenhuma).' : null;
+      p.corridas == null ? 'Informe as corridas (0 se nenhuma).' : fotoObrig() && !p.fotoFim ? 'Tire a foto do painel com o KM de retorno.' : null;
     if (err) return toast(err, true);
     if (p.kmFim - o.kmIni > 300 && !confirm('Foram ' + (p.kmFim - o.kmIni) + ' km neste turno. Está certo?')) return;
     store('resp', p.devolvido);
     var btn = $('button[type=submit]', f);
     busy(btn, true, p.fotoFim ? 'Enviando foto…' : null);
     run('closeShift', o.row, p).then(function (res) {
-      $('#dlg-ret').close(); toast(res.msg); resetForm(f); return refresh();
-    }).catch(function (e) { toast(errMsg(e), true); }).then(function () { busy(btn, false); });
+      busy(btn, false); $('#dlg-ret').close(); toast(res.msg); resetForm(f); refresh();
+    }).catch(function (e) { busy(btn, false); toast(errMsg(e), true); });
   }
 
   function submitCompleto(ev) {
@@ -395,9 +527,9 @@
       kmIni: num(field(f, 'kmIni').value), kmFim: num(field(f, 'kmFim').value), corridas: num(field(f, 'corridas').value),
       recebido: field(f, 'recebido').value.trim(), devolvido: field(f, 'devolvido').value.trim(), status: field(f, 'status').value,
       ocorrencia: field(f, 'ocorrencia').value.trim(), fotoIni: photo('c-ini'), fotoFim: photo('c-fim') };
-    var err = !p.moto ? 'Escolha a moto.' : !p.data ? 'Informe a data.' : !p.entregador ? 'Informe o entregador.' : !p.turno ? 'Informe o turno.' :
+    var err = !p.moto ? 'Escolha a moto.' : !p.data ? 'Informe a data.' : !p.entregador ? 'Escolha o entregador.' : !p.turno ? 'Escolha o turno.' :
       p.kmIni == null ? 'Informe o KM de saída.' : p.kmFim == null ? 'Informe o KM de retorno.' : p.kmFim < p.kmIni ? 'KM de retorno menor que o de saída.' :
-      p.corridas == null ? 'Informe as corridas.' : null;
+      p.corridas == null ? 'Informe as corridas.' : fotoObrig() && !p.fotoFim ? 'Tire a foto do painel com o KM de retorno.' : null;
     if (err) return toast(err, true);
     send(f, 'saveFullShift', p, p.fotoIni || p.fotoFim ? 'Enviando fotos…' : null);
   }
@@ -435,6 +567,35 @@
   /* ============================== RECEITA ============================== */
 
   ENTER.receita = function () { var i = $('#r-data'); if (!i.value) i.value = today(); };
+
+  /* ============================== FOLGA ============================== */
+
+  ENTER.folga = function () { var i = $('#fg-data'); if (!i.value) i.value = today(); };
+
+  function renderFolgas() {
+    var list = S.app.recentFolgas || [];
+    $('#list-folgas').innerHTML = list.length ? list.map(function (f) {
+      return '<div class="item"><span class="ico">' + icon('clock') + '</span><div class="main"><div class="t">' + esc(f.dataFmt) + ' · ' + esc(firstNames(f.entregador)) + '</div>' +
+        '<div class="s">' + esc(f.obs || 'Folga') + '</div></div>' +
+        '<button type="button" class="btn sm ghost" style="flex:none" data-folga-del="' + f.row + '" data-key="' + esc(f.key) + '" data-nome="' + esc(f.entregador) + '">Excluir</button></div>';
+    }).join('') : '<div class="empty">Nenhuma folga lançada ainda.</div>';
+  }
+
+  function submitFolga(ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    var p = { entregador: field(f, 'entregador').value, data: field(f, 'data').value || today(), obs: field(f, 'obs').value.trim() };
+    if (!p.entregador) return toast('Escolha o entregador.', true);
+    send(f, 'saveFolga', p);
+  }
+
+  function excluirFolga(b) {
+    if (!confirm('Excluir a folga de ' + b.dataset.nome + ' em ' + dmy(b.dataset.key) + '?')) return;
+    busy(b, true, '…');
+    run('deleteFolga', { row: +b.dataset.folgaDel, key: b.dataset.key, entregador: b.dataset.nome }).then(function (res) {
+      toast(res.msg); refresh();
+    }).catch(function (e) { busy(b, false); toast(errMsg(e), true); });
+  }
 
   function renderRec() {
     $('#rec-mes').textContent = 'No mês: ' + money(S.app.receitaMes);
@@ -490,11 +651,12 @@
   /* ============================== MOTOS ============================== */
 
   ENTER.motos = function () {
-    if (S.dash && !S.dashStale) return renderMotosView();
+    if (S.dash && (!S.dashStale || S.homeBusy)) return renderMotosView();
     $('#motos-list').innerHTML = '<div class="skeleton"></div>';
+    if (S.homeBusy) return; // a atualização em andamento preenche a lista
     loadDash().then(renderMotosView);
   };
-  function renderMotosView() { if (S.dash) $('#motos-list').innerHTML = S.dash.motos.map(motoCard).join('') || '<div class="empty">Nenhuma moto na aba Frota.</div>'; }
+  function renderMotosView() { if (S.dash) $('#motos-list').innerHTML = S.dash.motos.map(motoCard).join('') || '<div class="card empty">Nenhuma moto cadastrada. Toque em <b>Nova moto</b>.</div>'; }
 
   function motoCard(m) {
     var revKm = S.dash.config.revKm || 3000;
@@ -512,8 +674,78 @@
       '<div class="row"><span>Custo por km</span><b>' + (m.custoKm != null ? money(m.custoKm) : '—') + '</b></div>' +
       '<div class="row"><span>Consumo</span><b>' + (m.consumo != null ? nf(m.consumo, 1) + ' km/l' : '—') + '</b></div>' +
       '<div class="row"><span>No período</span><span>' + nf(m.km) + ' km · ' + nf(m.corridas) + ' corridas</span></div>' +
-      (S.view === 'motos' ? '<div class="actions" style="margin-top:12px"><button type="button" class="btn sm ghost" data-go="manutencao" data-moto="' + esc(m.id) + '" data-tipo-go="Revisão">' + icon('wrench') + 'Registrar revisão</button></div>' : '') +
+      (S.view === 'motos' ? '<div class="actions" style="margin-top:12px"><button type="button" class="btn sm ghost" data-go="manutencao" data-moto="' + esc(m.id) + '" data-tipo-go="Revisão">' + icon('wrench') + 'Registrar revisão</button>' +
+        '<button type="button" class="btn sm ghost" data-go="moto" data-moto="' + esc(m.id) + '">' + icon('doc') + 'Editar</button></div>' : '') +
       '</div>';
+  }
+
+  /* ============================== CADASTRO DE MOTO ============================== */
+
+  ENTER.moto = function (o) {
+    var f = $('#f-moto');
+    f.reset();
+    var id = o.moto || o.id || '';
+    var m = id && S.app ? (S.app.frota || []).filter(function (x) { return x.id === id; })[0] : null;
+    S.motoEdit = m || null;
+    field(f, 'original').value = m ? m.id : '';
+    field(f, 'motoId').value = id;
+    field(f, 'motoId').readOnly = !!m;
+    $('#mo-title').textContent = m ? 'Editar ' + m.id : 'Nova moto';
+    $('#top-title').textContent = m ? m.id : 'Nova moto';
+    $('#mo-id-hint').textContent = m ? 'A identificação não muda depois do cadastro (os lançamentos usam esse nome).' : 'Nome que aparece na Saída, no Abastecer e no painel.';
+    if (m) {
+      ['placa', 'modelo', 'entregador', 'inicio', 'ultRevData'].forEach(function (k) { field(f, k).value = m[k] || ''; });
+      field(f, 'kmInicial').value = m.kmInicial == null ? '' : m.kmInicial;
+      field(f, 'ultRevKm').value = m.ultRevKm == null ? '' : m.ultRevKm;
+    } else field(f, 'inicio').value = today();
+    $('#mo-km-lb').innerHTML = m ? 'KM no cadastro' : 'KM atual (do painel) <span class="req">*</span>';
+    $('#mo-km-hint').textContent = m ? (m.kmAtual != null ? 'KM atual conhecido: ' + nf(m.kmAtual) + ' km' : '') : 'Olhe o painel da moto e digite o número exato.';
+    $('#mo-excluir').hidden = !m;
+    proxMoto();
+  };
+
+  /** Mostra, enquanto a pessoa digita, quando será a próxima revisão. */
+  function proxMoto() {
+    var f = $('#f-moto'), cfg = S.app ? S.app.config : { revKm: 3000, revMeses: 3 };
+    var km = num(field(f, 'kmInicial').value), rev = num(field(f, 'ultRevKm').value);
+    var atual = Math.max(km || 0, (S.motoEdit && S.motoEdit.kmAtual) || 0);
+    var h = $('#mo-rev-hint');
+    h.className = 'hint'; h.textContent = '';
+    if (rev != null && atual && rev > atual) { h.className = 'hint warn'; h.textContent = 'Maior que o KM atual (' + nf(atual) + ').'; }
+    var base = rev != null ? rev : km, baseData = field(f, 'ultRevData').value || field(f, 'inicio').value, partes = [];
+    if (base != null) partes.push(nf(base + cfg.revKm) + ' km');
+    if (baseData && cfg.revMeses) { var d = kdate(baseData); d.setMonth(d.getMonth() + cfg.revMeses); partes.push(d.toLocaleDateString('pt-BR')); }
+    var box = $('#mo-prox');
+    box.hidden = !partes.length;
+    box.innerHTML = partes.length ? 'Próxima revisão: <b>' + partes.join('</b> ou <b>') + '</b>' + (partes.length > 1 ? ' (o que vier primeiro)' : '') +
+      '. Intervalo da aba Configurações: a cada ' + nf(cfg.revKm) + ' km' + (cfg.revMeses ? ' ou ' + cfg.revMeses + ' meses' : '') + '.' : '';
+  }
+
+  function submitMoto(ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    var p = { original: field(f, 'original').value, id: field(f, 'motoId').value.trim(), placa: field(f, 'placa').value.trim(), modelo: field(f, 'modelo').value.trim(),
+      entregador: field(f, 'entregador').value.trim(), kmInicial: num(field(f, 'kmInicial').value), inicio: field(f, 'inicio').value,
+      ultRevKm: num(field(f, 'ultRevKm').value), ultRevData: field(f, 'ultRevData').value };
+    var err = !p.id ? 'Informe a identificação da moto (ex.: MOTO 01).' : !p.original && p.kmInicial == null ? 'Informe o KM atual da moto.' : null;
+    if (err) return toast(err, true);
+    var btn = $('button[type=submit]', f);
+    busy(btn, true);
+    run('saveMoto', p).then(function (res) {
+      busy(btn, false); toast(res.msg); refresh(); back();
+    }).catch(function (e) { busy(btn, false); toast(errMsg(e), true); });
+  }
+
+  function excluirMoto() {
+    var m = S.motoEdit;
+    if (!m) return;
+    if (m.lancamentos) return toast('A ' + m.id + ' tem ' + m.lancamentos + ' lançamento(s) e não pode ser excluída.', true);
+    if (!confirm('Excluir a ' + m.id + '? Ela sai da aba Frota.')) return;
+    var btn = $('#mo-excluir');
+    busy(btn, true, 'Excluindo…');
+    run('deleteMoto', m.id).then(function (res) {
+      busy(btn, false); toast(res.msg); refresh(); back();
+    }).catch(function (e) { busy(btn, false); toast(errMsg(e), true); });
   }
 
   /* ============================== EQUIPE ============================== */
@@ -638,21 +870,25 @@
     busy(btn, true);
     run('saveDriver', p).then(function (res) {
       toast(res.msg); S.driversStale = true; S.dashStale = true;
-      loadApp();
+      loadHome();
       return run('getDriver', res.id).then(function (r) { S.driver = r; fillDriver(r); });
     }).catch(function (e) { toast(errMsg(e), true); }).then(function () { busy(btn, false); });
   }
 
   /* ============================== PAINEL ============================== */
 
-  ENTER.inicio = function () { if (S.dashStale) loadDash(); };
+  // Se uma atualização geral já está a caminho, ela mesma redesenha o painel.
+  ENTER.inicio = function () { if (S.dashStale && !S.homeBusy) loadDash(); else if (S.dash) renderCharts(); };
 
   function loadDash() {
+    var per = S.period;
     if (!S.dash) $('#dash').innerHTML = '<div class="kpis"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>';
     else $('#dash').style.opacity = '.55';
-    return run('getDashboard', S.period).then(function (d) {
+    return run('getDashboard', per).then(function (d) {
+      if (per !== S.period) return; // a pessoa já trocou de período
       S.dash = d; S.dashStale = false; $('#dash').style.opacity = ''; renderDash();
     }).catch(function (e) {
+      if (per !== S.period) return;
       $('#dash').style.opacity = '';
       $('#dash').innerHTML = '<div class="card empty">Erro ao carregar o painel: ' + esc(errMsg(e)) + '</div>';
     });
@@ -672,8 +908,9 @@
     $('#h-corr').textContent = nf(d.hoje.corridas);
     $('#h-rec').textContent = moneyShort(d.hoje.receita);
 
-    // alertas
+    // alertas (+ aviso de cadastro quando ainda não há motos)
     var al = d.alertas;
+    if (S.app && !S.app.motos.length) al = [{ nivel: 'warn', icone: 'moto', titulo: 'Nenhuma moto cadastrada', texto: 'Cadastre as motos (com o KM atual) para lançar turnos e abastecimentos.', acao: { view: 'moto' } }].concat(al);
     $('#home-alerts').innerHTML = al.length ? '<div class="sec-title"><h2>Atenção</h2>' + (al.length > 4 ? '<button type="button" class="link" id="al-more">Ver todos (' + al.length + ')</button>' : '') + '</div>' +
       '<div class="alerts">' + al.map(function (a, i) {
         var act = a.acao ? " data-acao='" + esc(JSON.stringify(a.acao)) + "'" : '';
@@ -681,8 +918,16 @@
       }).join('') + '</div>' : '';
 
     // escala de hoje
+    // Escala de hoje (aba ESCALA): turno de cada um, quem já saiu e quem está atrasado (15 min depois do início do turno).
+    var agoraMin = new Date().getHours() * 60 + new Date().getMinutes();
+    var inicioTurno = function (t) { var f = turnosFixos().filter(function (x) { return x.nome === t; })[0]; return f ? f.ini : null; };
     $('#home-escala').innerHTML = d.escalaHoje.length ? '<div class="sec-title"><h2>Escala de hoje</h2><span class="small muted">' + d.escalaHoje.filter(function (e) { return e.emTurno; }).length + '/' + d.escalaHoje.length + ' já saíram</span></div><div class="chips">' +
-      d.escalaHoje.map(function (e) { return '<span class="person"><span class="avatar">' + esc(initials(e.nome)) + '</span>' + esc(firstNames(e.nome)) + '<span class="st ' + (e.emTurno ? 'on' : 'off') + '">' + (e.emTurno ? '● rodando' : 'aguardando') + '</span></span>'; }).join('') + '</div>' : '';
+      d.escalaHoje.map(function (e) {
+        var ini = inicioTurno(e.turno), atrasado = !e.emTurno && ini != null && agoraMin > ini + 15;
+        var st = e.emTurno ? ['on', '● saiu'] : atrasado ? ['late', 'atrasado'] : ['off', 'aguardando'];
+        return '<span class="person"><span class="avatar">' + esc(initials(e.nome)) + '</span>' + esc(firstNames(e.nome)) +
+          (e.turno ? '<small class="muted">' + esc(e.turno) + '</small>' : '') + '<span class="st ' + st[0] + '">' + st[1] + '</span></span>';
+      }).join('') + '</div>' : '';
 
     var K = [
       { k: 'receita', l: 'Receita', i: 'money', f: money, pol: 1, s: c.receita ? (c.receitaCorrida ? money(c.receitaCorrida) + ' por corrida' : '') : 'lance em Receita do dia' },
@@ -824,7 +1069,7 @@
     if (b.dataset.go) { go(b.dataset.go, { mode: b.dataset.mode, moto: b.dataset.moto, tipo: b.dataset.tipoGo }); return; }
     if (b.dataset.ent) { go('entregador', { id: b.dataset.ent }); return; }
     if (b.dataset.moto && form) { pickMoto(form, b.dataset.moto); return; }
-    if (b.dataset.turno && form) { field(form, 'turno').value = b.dataset.turno; return; }
+    if (b.dataset.turno && form) { field(form, 'turno').value = b.dataset.turno; form.dataset.autoTurno = '0'; setHint(form, 'turno', ''); marcaTurno(form); return; }
     if (b.dataset.ret) { openRet(+b.dataset.ret); return; }
     if (b.dataset.tipo && form) { pickTipo(b.dataset.tipo); return; }
     if (b.classList.contains('check-opt')) { b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true'); return; }
@@ -840,10 +1085,15 @@
     if (b.dataset.v && b.closest('#e-status')) { setStatus(b.dataset.v); return; }
     if (b.id === 'btn-back') { back(); return; }
     if (b.id === 'eq-novo') { go('entregador', {}); return; }
+    if (b.id === 'mo-excluir') { excluirMoto(); return; }
+    if (b.dataset.folgaDel) { excluirFolga(b); return; }
   });
 
   document.addEventListener('change', function (ev) {
     var t = ev.target;
+    // Escolha manual na lista de entregadores: a sugestão automática não troca mais (alguns celulares só disparam "change").
+    if (t.name === 'entregador' && t.form && t.form.dataset.autoEnt) { t.form.dataset.autoEnt = '0'; setHint(t.form, 'ent', ''); }
+    if (t.name === 'entregador' && t.form) sugerirTurno(t.form); // escolheu o entregador: turno da escala dele
     if (t.matches('.photo input[type=file]')) {
       var box = t.closest('.photo'), file = t.files && t.files[0];
       if (!file) return;
@@ -861,10 +1111,13 @@
     var t = ev.target, form = t.closest('form');
     if (!form) { if (t.id === 'eq-busca') renderDrivers(); return; }
     if (t.hasAttribute('data-autokm')) { t.dataset.auto = '0'; kmHint(form); }
+    if (t.name === 'entregador' && form.dataset.autoEnt) { form.dataset.autoEnt = '0'; setHint(form, 'ent', ''); }
+    if (t.name === 'turno' && form.dataset.autoTurno) { form.dataset.autoTurno = '0'; setHint(form, 'turno', ''); }
     if (form.id === 'f-ret') calcTurno(form, S.closing && S.closing.kmIni);
     if (form.id === 'f-completo') calcTurno(form, num(field(form, 'kmIni').value));
     if (form.id === 'f-abast') precoLitro();
     if (form.id === 'f-manut') manutTotal();
+    if (form.id === 'f-moto') { if (t.name === 'placa') t.value = t.value.toUpperCase(); proxMoto(); }
   });
 
   $('#f-saida').addEventListener('submit', submitSaida);
@@ -872,14 +1125,16 @@
   $('#f-completo').addEventListener('submit', submitCompleto);
   $('#f-abast').addEventListener('submit', submitAbast);
   $('#f-rec').addEventListener('submit', submitRec);
+  $('#f-folga').addEventListener('submit', submitFolga);
   $('#f-manut').addEventListener('submit', submitManut);
   $('#f-ent').addEventListener('submit', submitEnt);
+  $('#f-moto').addEventListener('submit', submitMoto);
 
   var rz;
   window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { if (S.view === 'inicio') renderCharts(); }, 150); });
 
   paintIcons(document);
   $$('[data-autokm]').forEach(function (i) { i.dataset.auto = '1'; });
-  loadApp().then(function () { if (S.app) loadDash(); });
+  start();
 })();
 </script>

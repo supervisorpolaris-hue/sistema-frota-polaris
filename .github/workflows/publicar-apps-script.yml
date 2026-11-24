@@ -1,0 +1,90 @@
+# Testa o sistema em toda alteração e, quando a alteração entra na main, publica no Google Apps Script
+# (mesma implantação = o link do app não muda). Configuração única: veja ATUALIZACAO-AUTOMATICA.md.
+name: Testar e publicar no Apps Script
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps-script/**', 'tests/**', '.github/workflows/publicar-apps-script.yml']
+  pull_request:
+    paths: ['apps-script/**', 'tests/**', '.github/workflows/publicar-apps-script.yml']
+  workflow_dispatch: {}
+
+concurrency:
+  group: publicar-apps-script
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    name: Testes (simulador da planilha)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Código sem erro de sintaxe
+        run: cp apps-script/Code.gs /tmp/Code.js && node --check /tmp/Code.js
+      - name: Testes do servidor
+        run: node tests/rodar-testes.js
+
+  publicar:
+    name: Publicar no Apps Script
+    needs: testes
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+      SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+      DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+    steps:
+      - name: Conferir configuração
+        id: cfg
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$SCRIPT_ID" ] || [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::warning::Publicação automática ainda não configurada (faltam os segredos CLASPRC_JSON, SCRIPT_ID ou DEPLOYMENT_ID). Veja ATUALIZACAO-AUTOMATICA.md."
+            echo "pronto=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "pronto=1" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.pronto == '1'
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.pronto == '1'
+        with:
+          node-version: '20'
+      - name: Instalar clasp (ferramenta oficial do Google)
+        if: steps.cfg.outputs.pronto == '1'
+        run: npm install -g @google/clasp@2.4.2
+      - name: Login do clasp
+        if: steps.cfg.outputs.pronto == '1'
+        run: printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+      - name: Montar os arquivos (mantendo o manifesto atual do projeto)
+        if: steps.cfg.outputs.pronto == '1'
+        run: |
+          mkdir -p atual build
+          printf '{"scriptId":"%s","rootDir":"."}' "$SCRIPT_ID" > atual/.clasp.json
+          (cd atual && clasp pull)
+          # manifesto (fuso, permissões, app da web) vem do próprio projeto; garante "executar como quem acessa"
+          node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync("atual/appsscript.json", "utf8"));
+            if (!m.webapp) m.webapp = { executeAs: "USER_ACCESSING", access: "ANYONE" };
+            fs.writeFileSync("build/appsscript.json", JSON.stringify(m, null, 2));
+            console.log("Manifesto:", JSON.stringify({ timeZone: m.timeZone, webapp: m.webapp }));
+          '
+          cp apps-script/*.gs apps-script/*.html build/
+          printf '{"scriptId":"%s","rootDir":"."}' "$SCRIPT_ID" > build/.clasp.json
+          ls -la build
+      - name: Enviar código
+        if: steps.cfg.outputs.pronto == '1'
+        run: (cd build && clasp push --force)
+      - name: Publicar nova versão (mesmo link)
+        if: steps.cfg.outputs.pronto == '1'
+        run: (cd build && clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "GitHub ${GITHUB_SHA::7}")
+      - name: Apagar o login da máquina
+        if: always()
+        run: rm -f "$HOME/.clasprc.json"
