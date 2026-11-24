@@ -141,7 +141,7 @@
 
   /* ============================== navegação ============================== */
 
-  var PARENT = { entregador: 'equipe', receita: 'mais', manutencao: 'mais', motos: 'mais', moto: 'motos' };
+  var PARENT = { entregador: 'equipe', receita: 'mais', folga: 'mais', manutencao: 'mais', motos: 'mais', moto: 'motos' };
   var ENTER = {};
 
   function go(view, opts, fromBack) {
@@ -270,7 +270,7 @@
     var dt = kdate(a.today).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
     $('#h-date').textContent = dt.charAt(0).toUpperCase() + dt.slice(1);
 
-    renderRua(); renderTurnos(); renderFuel(); renderRec(); renderManut();
+    renderRua(); renderTurnos(); renderFuel(); renderRec(); renderManut(); renderFolgas();
   }
 
   /* ============================== motos nos formulários ============================== */
@@ -332,7 +332,10 @@
     var fid = form.getAttribute('id'), ent = field(form, 'entregador'), tur = field(form, 'turno');
     if (ent && (ent.value === '' || form.dataset.autoEnt === '1')) {
       // Na saída, não sugere quem já está na rua com outra moto.
-      var naRua = function (n) { return fid !== 'f-abast' && S.app.openShifts.some(function (o) { return normTxt(o.entregador) === normTxt(n); }); };
+      var naRua = function (n) {
+        return fid !== 'f-abast' && (S.app.openShifts.some(function (o) { return normTxt(o.entregador) === normTxt(n); }) ||
+          (fid === 'f-saida' && (S.app.folgasHoje || []).some(function (x) { return normTxt(x) === normTxt(n); }))); // de folga hoje
+      };
       var nome = '', motivo = '';
       // Saída: primeiro quem está na escala de hoje para o turno deste horário e ainda não saiu
       // (preferindo o vinculado à moto ou o último que usou), depois vinculado / último.
@@ -564,6 +567,35 @@
   /* ============================== RECEITA ============================== */
 
   ENTER.receita = function () { var i = $('#r-data'); if (!i.value) i.value = today(); };
+
+  /* ============================== FOLGA ============================== */
+
+  ENTER.folga = function () { var i = $('#fg-data'); if (!i.value) i.value = today(); };
+
+  function renderFolgas() {
+    var list = S.app.recentFolgas || [];
+    $('#list-folgas').innerHTML = list.length ? list.map(function (f) {
+      return '<div class="item"><span class="ico">' + icon('clock') + '</span><div class="main"><div class="t">' + esc(f.dataFmt) + ' · ' + esc(firstNames(f.entregador)) + '</div>' +
+        '<div class="s">' + esc(f.obs || 'Folga') + '</div></div>' +
+        '<button type="button" class="btn sm ghost" style="flex:none" data-folga-del="' + f.row + '" data-key="' + esc(f.key) + '" data-nome="' + esc(f.entregador) + '">Excluir</button></div>';
+    }).join('') : '<div class="empty">Nenhuma folga lançada ainda.</div>';
+  }
+
+  function submitFolga(ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    var p = { entregador: field(f, 'entregador').value, data: field(f, 'data').value || today(), obs: field(f, 'obs').value.trim() };
+    if (!p.entregador) return toast('Escolha o entregador.', true);
+    send(f, 'saveFolga', p);
+  }
+
+  function excluirFolga(b) {
+    if (!confirm('Excluir a folga de ' + b.dataset.nome + ' em ' + dmy(b.dataset.key) + '?')) return;
+    busy(b, true, '…');
+    run('deleteFolga', { row: +b.dataset.folgaDel, key: b.dataset.key, entregador: b.dataset.nome }).then(function (res) {
+      toast(res.msg); refresh();
+    }).catch(function (e) { busy(b, false); toast(errMsg(e), true); });
+  }
 
   function renderRec() {
     $('#rec-mes').textContent = 'No mês: ' + money(S.app.receitaMes);
@@ -1054,6 +1086,7 @@
     if (b.id === 'btn-back') { back(); return; }
     if (b.id === 'eq-novo') { go('entregador', {}); return; }
     if (b.id === 'mo-excluir') { excluirMoto(); return; }
+    if (b.dataset.folgaDel) { excluirFolga(b); return; }
   });
 
   document.addEventListener('change', function (ev) {
@@ -1092,6 +1125,7 @@
   $('#f-completo').addEventListener('submit', submitCompleto);
   $('#f-abast').addEventListener('submit', submitAbast);
   $('#f-rec').addEventListener('submit', submitRec);
+  $('#f-folga').addEventListener('submit', submitFolga);
   $('#f-manut').addEventListener('submit', submitManut);
   $('#f-ent').addEventListener('submit', submitEnt);
   $('#f-moto').addEventListener('submit', submitMoto);

@@ -33,7 +33,7 @@ function build(opts) {
   for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
     const k = key(d);
     const isToday = k === key(today);
-    if (R() < 0.08) reg.rows.push([new Date(d), 'FOLGA', pick(nomes), 'FOLGA', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+    if (R() < 0.08) { const folga = [new Date(d), 'FOLGA', pick(nomes), 'FOLGA', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']; if (!opts.semFolgas) reg.rows.push(folga); }
     motos.forEach(m => {
       ['MANHÃ', 'NOITE'].forEach(turno => {
         if (R() > (turno === 'MANHÃ' ? 0.85 : 0.6)) return;

@@ -534,6 +534,8 @@ function app_(c) {
     entregadores: drivers.filter(ativo_).map(function (d) { return d.nome; }),
     turnos: byFrequency_(c.reg.rows, 'turno'),
     turnoHoras: turnoHoras_(c.reg.rows, c.today),
+    recentFolgas: c.reg.folgas.slice().sort(function (x, y) { return x.key < y.key ? 1 : x.key > y.key ? -1 : y.row - x.row; }).slice(0, 8).map(function (f) { return pick_(f, ['row', 'key', 'dataFmt', 'entregador', 'obs']); }),
+    folgasHoje: c.reg.folgas.filter(function (f) { return f.key === c.today; }).map(function (f) { return f.entregador; }),
     escalaHoje: escalaHoje_(c, drivers).filter(function (e) { return e.cadastrado; })
       .map(function (e) { return { nome: e.nome, turno: e.turno, saiu: e.emTurno }; }),
     responsaveis: byFrequency_(c.reg.rows.map(function (r) { return { x: r.recebido }; })
@@ -582,6 +584,83 @@ function frotaPublica_(c, lastKm) {
   });
 }
 
+/* ============================== API: FOLGA ============================== */
+
+/**
+ * Lança a folga do entregador no dia: vira uma linha FOLGA na aba REGISTRO DIÁRIO (junto com os turnos,
+ * para aparecer quando filtrar a planilha) e F na aba ESCALA, se o mês já estiver montado.
+ */
+function saveFolga(p) {
+  return withLock_(function () {
+    var c = ctx_();
+    p = p || {};
+    var data = parseDate_(p.data);
+    if (!data) throw new Error('Data inválida.');
+    var nome = entregadorValido_(c, p.entregador, true);
+    var key = dateKey_(data, c.tz), quando = fmtKey_(key);
+    if (c.reg.folgas.some(function (f) { return f.key === key && sameName_(f.entregador, nome); })) throw new Error(nome + ' já tem folga lançada em ' + quando + '.');
+    var turno = c.reg.rows.filter(function (r) { return r.key === key && sameName_(r.entregador, nome); })[0];
+    if (turno) throw new Error(nome + ' tem turno lançado em ' + quando + ' (' + turno.moto + (turno.turno ? ', ' + turno.turno : '') + '). Não dá para lançar folga no mesmo dia.');
+    writeRow_(c.reg, nextRow_(c.reg), { data: data, moto: 'FOLGA', entregador: nome, turno: 'FOLGA', ocorrencia: String(p.obs || '').trim(), por: userEmail_() }, true);
+    var naEscala = false;
+    try {
+      var cel = celulaEscala_(c.ss, key, nome);
+      if (cel) {
+        var antes = String(cel.getValue() == null ? '' : cel.getValue()).trim();
+        if (norm_(antes) !== 'f') cel.setNote(NOTA_FOLGA + (antes || '(vazio)'));
+        cel.setValue('F'); naEscala = true;
+      }
+    } catch (e) { /* escala em formato diferente: segue só com o registro */ }
+    return { ok: true, msg: 'Folga lançada: ' + nome + ' em ' + quando + '.' + (naEscala ? ' Marcada também na escala.' : '') };
+  });
+}
+
+/** Exclui uma folga lançada por engano: limpa a linha no REGISTRO DIÁRIO e devolve a escala ao valor anterior (guardado na nota). */
+function deleteFolga(p) {
+  return withLock_(function () {
+    var c = ctx_();
+    p = p || {};
+    var f = c.reg.folgas.filter(function (x) { return x.row === +p.row; })[0];
+    if (!f || f.key !== p.key || !sameName_(f.entregador, p.entregador)) throw new Error('Folga não encontrada. Atualize a tela.');
+    var rg = c.reg.sheet.getRange(f.row, 1, 1, c.reg.lastCol), fm = rg.getFormulas();
+    rg.clearContent();
+    if (fm[0].some(function (x) { return x !== ''; })) rg.setFormulas(fm);
+    var escala = '';
+    try {
+      var cel = celulaEscala_(c.ss, f.key, f.entregador), nota = cel ? String(cel.getNote() || '') : '';
+      if (cel && norm_(cel.getValue()) === 'f' && nota.indexOf(NOTA_FOLGA) === 0) {
+        var antes = nota.slice(NOTA_FOLGA.length).trim();
+        cel.setValue(antes === '(vazio)' ? '' : antes); cel.setNote('');
+        escala = ' A escala voltou para ' + (antes === '(vazio)' ? 'em branco' : antes) + '.';
+      } else if (cel && norm_(cel.getValue()) === 'f') escala = ' A escala desse dia continua F — se ele vai trabalhar, ajuste na aba ESCALA.';
+    } catch (e) { /* segue */ }
+    SpreadsheetApp.flush();
+    return { ok: true, msg: 'Folga excluída: ' + f.entregador + ' em ' + fmtKey_(f.key) + '.' + escala };
+  });
+}
+
+function folgaNoDia_(c, nome, key) {
+  var f = (c.reg.folgas || []).filter(function (x) { return x.key === key && sameName_(x.entregador, nome); })[0];
+  if (f) throw new Error(f.entregador + ' está de folga em ' + fmtKey_(key) + '. Para lançar o turno, exclua a folga em Mais → Folga.');
+}
+
+var NOTA_FOLGA = 'Folga lançada pelo app. Antes: ';
+
+/** Célula do entregador no dia, na aba ESCALA (ou null se o mês ou o nome não estiverem lá). */
+function celulaEscala_(ss, key, nome) {
+  var sh = ss.getSheetByName(SHEET.ESCALA);
+  if (!sh) return null;
+  var ano = +key.slice(0, 4), mes = +key.slice(5, 7), dia = +key.slice(8, 10);
+  var b = acharBlocoEscala_(sh, 'ESCALA MÊS DE ' + nomeMes_(mes) + ' ' + ano);
+  if (!b || b.ultima <= b.linha + 2) return null;
+  var dias = sh.getRange(b.linha + 1, 1, 1, ESCALA_COLS).getValues()[0], col = -1;
+  for (var j = 1; j < dias.length; j++) if (toNumber_(dias[j]) === dia) { col = j; break; }
+  if (col < 0) return null;
+  var n = b.ultima - (b.linha + 2), nomes = sh.getRange(b.linha + 3, 1, n, 1).getValues();
+  for (var i = 0; i < n; i++) if (sameName_(nomes[i][0], nome)) return sh.getRange(b.linha + 3 + i, col + 1);
+  return null;
+}
+
 /* ============================== API: TURNOS ============================== */
 
 function openShift(p) {
@@ -589,6 +668,7 @@ function openShift(p) {
     var c = ctx_();
     var d = validateBase_(p, c);
     if (d.kmIni == null) throw new Error('Informe o KM de início.');
+    folgaNoDia_(c, d.entregador, dateKey_(d.data, c.tz));
     if (c.config.fotoObrigatoria && !p.fotoIni) throw new Error('Tire a foto do painel com o KM de saída.');
     var jaAberto = openShifts_(c.reg.rows, c.today).filter(function (o) { return o.moto === d.moto; })[0];
     if (jaAberto && !p.forcar) {
@@ -629,6 +709,7 @@ function saveFullShift(p) {
     var c = ctx_();
     var d = validateBase_(p, c);
     if (d.kmIni == null) throw new Error('Informe o KM de início.');
+    folgaNoDia_(c, d.entregador, dateKey_(d.data, c.tz));
     var fim = validateFechamento_(p, d.kmIni);
     // Turno completo é lançado depois: só a foto do KM final é exigida (a da saída pode não existir mais).
     if (c.config.fotoObrigatoria && !p.fotoFim) throw new Error('Tire a foto do painel com o KM de retorno.');
@@ -1072,11 +1153,13 @@ function perfByDriver_(c, drivers, a, b, escala) {
     if (r.corridas != null) { p.corridas += r.corridas; p.turnosComCorridas++; if (r.corridas >= (r.meta || meta)) p.bateu++; }
   });
   if (escala) {
+    var deFolga = {};
+    (c.reg.folgas || []).forEach(function (f) { var d = matchDriver_(f.entregador, drivers); if (d) deFolga[d.id + '|' + f.key] = true; });
     Object.keys(escala).forEach(function (k) {
       if (k < a || k > b || k > c.today) return;
       escala[k].forEach(function (e) {
         var d = matchDriver_(e.nome, drivers);
-        if (!d) return;
+        if (!d || deFolga[d.id + '|' + k]) return; // folga lançada no app: não conta como escalado nem falta
         out[d.id].escalados++;
         if (k < c.today && !out[d.id].dias[k]) out[d.id].faltas++;
       });
@@ -1367,7 +1450,10 @@ function escala_(c) { return c._escala || (c._escala = readEscala_(c.ss, c.today
 function escalaHoje_(c, drivers) {
   var ordem = {};
   (c.config.turnos || []).forEach(function (t, i) { ordem[t.nome] = i; });
-  return (escala_(c)[c.today] || []).map(function (e) {
+  var folgaHoje = (c.reg.folgas || []).filter(function (f) { return f.key === c.today; });
+  return (escala_(c)[c.today] || []).filter(function (e) {
+    return !folgaHoje.some(function (f) { return sameName_(f.entregador, e.nome); });
+  }).map(function (e) {
     var d = matchDriver_(e.nome, drivers);
     var nome = d ? d.nome : titleCase_(e.nome);
     var saiu = c.reg.rows.some(function (r) { return r.key === c.today && sameName_(r.entregador, nome); });
@@ -1476,14 +1562,20 @@ function readRegistro_(ss, tz) {
     if (idx[k] == null || lastRow < 2) return;
     links[k] = values.map(function (v) { var raw = String(v[idx[k]] || ''); return /^https?:\/\//.test(raw) ? raw : ''; });
   });
-  var rows = [], lastUsed = 1;
+  var rows = [], folgas = [], lastUsed = 1;
   values.forEach(function (v, i) {
     var get = function (k) { return idx[k] == null ? '' : v[idx[k]]; };
     var moto = String(get('moto') || '').trim();
     var entregador = String(get('entregador') || '').trim();
     var kmIni = toNumber_(get('kmIni')), kmFim = toNumber_(get('kmFim'));
     if (moto || entregador || kmIni != null || kmFim != null) lastUsed = i + 2;
-    if (!moto || norm_(moto) === 'folga' || norm_(get('turno')) === 'folga') return; // FOLGA não é turno
+    var ehFolga = norm_(moto) === 'folga' || norm_(get('turno')) === 'folga';
+    if (ehFolga && cleanName_(entregador)) {
+      var df = parseDate_(get('data'));
+      if (df) folgas.push({ row: i + 2, key: dateKey_(df, tz), dataFmt: fmtDate_(df, tz), entregador: entregador,
+        obs: String(get('ocorrencia') || '').trim(), por: String(get('por') || '') });
+    }
+    if (!moto || ehFolga) return; // FOLGA não é turno (fica na lista de folgas)
     var date = parseDate_(get('data'));
     rows.push({
       row: i + 2, key: date ? dateKey_(date, tz) : '', dataFmt: date ? fmtDate_(date, tz) : '',
@@ -1497,7 +1589,7 @@ function readRegistro_(ss, tz) {
       fotoIni: links.fotoIni ? links.fotoIni[i] : '', fotoFim: links.fotoFim ? links.fotoFim[i] : ''
     });
   });
-  return { sheet: sheet, idx: idx, lastCol: lastCol, lastUsed: lastUsed, rows: rows };
+  return { sheet: sheet, idx: idx, lastCol: lastCol, lastUsed: lastUsed, rows: rows, folgas: folgas };
 }
 
 function readConfig_(ss) {

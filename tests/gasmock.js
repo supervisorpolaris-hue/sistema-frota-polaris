@@ -53,6 +53,9 @@ function makeEnv(data, opts) {
         clearContent() { hit('Range.clearContent', nr * nc); for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) { const k = (r + i) + ',' + (c + j); if (get(r + i, c + j) !== '') set(r + i, c + j, ''); delete S.formulas[k]; delete S.links[k]; } return R; },
         setFormulas(m) { hit('Range.setFormulas', nr * nc); m.forEach((row, i) => row.forEach((f, j) => { const k = (r + i) + ',' + (c + j); if (f) S.formulas[k] = f; else delete S.formulas[k]; })); return R; },
         setValue(v) { hit('Range.setValue', 1); set(r, c, v); delete S.links[r + ',' + c]; return R; },
+        getValue() { hit('Range.getValue', 1); const v = get(r, c); return v == null ? '' : v; },
+        getNote() { hit('Range.getNote', 1); return (S.notes || {})[r + ',' + c] || ''; },
+        setNote(t) { hit('Range.setNote', 1); S.notes = S.notes || {}; if (t) S.notes[r + ',' + c] = String(t); else delete S.notes[r + ',' + c]; return R; },
         setRichTextValue(rt) { hit('Range.setRichTextValue', 1); set(r, c, rt.text); if (rt.url) S.links[r + ',' + c] = rt.url; else delete S.links[r + ',' + c]; return R; },
         setNumberFormat(f) { hit('Range.setNumberFormat'); S.formats = S.formats || {}; for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) S.formats[(r + i) + ',' + (c + j)] = f; return R; },
         setFontWeight() { hit('Range.format'); return R; }, setFontColor() { hit('Range.format'); return R; },
@@ -83,7 +86,7 @@ function makeEnv(data, opts) {
         if (a < S.rows.length) {
           S.rows.splice(a, 0, ...Array.from({ length: n }, () => []));
           const shift = m => { const o = {}; Object.keys(m || {}).forEach(k => { const [x, y] = k.split(',').map(Number); o[(x > a ? x + n : x) + ',' + y] = m[k]; }); return o; };
-          S.formulas = shift(S.formulas); S.links = shift(S.links); S.dv = shift(S.dv); S.formats = shift(S.formats);
+          S.formulas = shift(S.formulas); S.links = shift(S.links); S.dv = shift(S.dv); S.formats = shift(S.formats); S.notes = shift(S.notes);
         }
       },
       insertColumnsAfter(a, n) { hit('Sheet.insertColumnsAfter'); S.maxCols += n; },
@@ -92,7 +95,7 @@ function makeEnv(data, opts) {
       deleteRow(r) {
         hit('Sheet.deleteRow'); S.rows.splice(r - 1, 1);
         const shift = m => { const o = {}; Object.keys(m).forEach(k => { const [a, b] = k.split(',').map(Number); if (a < r) o[k] = m[k]; else if (a > r) o[(a - 1) + ',' + b] = m[k]; }); return o; };
-        S.formulas = shift(S.formulas); S.links = shift(S.links); return this;
+        S.formulas = shift(S.formulas); S.links = shift(S.links); S.notes = shift(S.notes || {}); return this;
       },
       setFrozenColumns(n) { hit('Sheet.format'); S.frozenCols = n; },
       setTabColor(cor) { hit('Sheet.format'); S.tabColor = cor; return this; },

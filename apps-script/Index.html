@@ -213,6 +213,7 @@
     <section class="view" data-view="mais" data-title="Mais" hidden>
       <div class="menu">
         <button type="button" data-go="receita"><span class="ico"><svg class="i" data-i="money"></svg></span><span>Receita do dia<small>Lançar quanto entrou</small></span><svg class="i chev" data-i="chev"></svg></button>
+        <button type="button" data-go="folga"><span class="ico"><svg class="i" data-i="clock"></svg></span><span>Folga<small>Lançar a folga de um entregador</small></span><svg class="i chev" data-i="chev"></svg></button>
         <button type="button" data-go="manutencao"><span class="ico"><svg class="i" data-i="wrench"></svg></span><span>Manutenção<small>Revisão, óleo, pneu, peças</small></span><svg class="i chev" data-i="chev"></svg></button>
         <button type="button" data-go="motos"><span class="ico"><svg class="i" data-i="moto"></svg></span><span>Motos<small>Cadastro, KM, revisões e custos</small></span><svg class="i chev" data-i="chev"></svg></button>
       </div>
@@ -221,6 +222,22 @@
         <a id="m-folder" target="_blank" rel="noopener" href="#"><span class="ico"><svg class="i" data-i="folder"></svg></span><span>Pasta de arquivos<small>Fotos e documentos no Drive</small></span><svg class="i chev" data-i="chev"></svg></a>
       </div>
       <p class="small muted" style="text-align:center;margin-top:18px" id="m-user"></p>
+    </section>
+
+    <!-- ======================= FOLGA ======================= -->
+    <section class="view" data-view="folga" data-title="Folga" data-sub hidden>
+      <form id="f-folga" class="card" novalidate autocomplete="off">
+        <p class="form-title">Quem está de folga?</p>
+        <div class="fields two">
+          <div class="field"><label for="fg-ent">Entregador <span class="req">*</span></label><select id="fg-ent" name="entregador" data-ent></select></div>
+          <div class="field"><label for="fg-data">Dia da folga <span class="req">*</span></label><input id="fg-data" name="data" type="date"></div>
+          <div class="field full"><label for="fg-obs">Observação</label><input id="fg-obs" name="obs" placeholder="opcional — ex.: folga da semana, troca com Fulano"></div>
+        </div>
+        <p class="hint">Vira uma linha <b>FOLGA</b> na aba REGISTRO DIÁRIO (junto com os turnos) e marca <b>F</b> na escala do mês.</p>
+        <div class="actions"><button type="submit" class="btn primary"><svg class="i" data-i="check"></svg>Lançar folga</button></div>
+      </form>
+      <div class="sec-title"><h2>Últimas folgas</h2></div>
+      <div class="list" id="list-folgas"></div>
     </section>
 
     <!-- ======================= RECEITA ======================= -->

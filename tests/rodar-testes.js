@@ -4,7 +4,7 @@
 const path = require('path');
 const { spawnSync } = require('child_process');
 const code = path.join(__dirname, '..', 'apps-script', 'Code.gs');
-const testes = ['zerar', 'moto', 'sugestao', 'foto', 'acesso', 'turno', 'escala', 'padronizar', 'pasta'];
+const testes = ['zerar', 'moto', 'sugestao', 'foto', 'acesso', 'turno', 'escala', 'padronizar', 'pasta', 'folga'];
 let falhas = 0;
 for (const t of testes) {
   const r = spawnSync(process.execPath, [path.join(__dirname, t + '-test.js'), code], { encoding: 'utf8', env: Object.assign({}, process.env, { TZ: 'America/Sao_Paulo' }) });

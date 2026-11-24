@@ -11,7 +11,7 @@ Ele grava na planilha **Controle_Frota_Polaris** e guarda fotos e documentos no 
 | **Turnos** | Saída (KM automático, foto do painel, checklist de pneus/freios/luzes/óleo), Retorno (KM final com foto, corridas, meta) e Turno completo. |
 | **Abastecer** | Valor, litros, KM com foto, tanque cheio, posto e foto do cupom. Calcula o **consumo real** (km/l) de um tanque cheio ao outro. |
 | **Equipe** | Cadastro dos entregadores (dados, CNH, salário, PIX, camisa, situação) e **documentos**: CNH, RG/CPF, comprovante de residência, contrato/termo da moto e outros. |
-| **Mais** | Receita do dia, Manutenção (revisão, óleo, pneu… — uma revisão atualiza a aba Frota sozinha), **Motos** (cadastrar, editar e excluir moto; KM, revisão e custos de cada uma), links da planilha e da pasta de arquivos. |
+| **Mais** | Receita do dia, Manutenção (revisão, óleo, pneu… — uma revisão atualiza a aba Frota sozinha), **Motos** (cadastrar, editar e excluir moto; KM, revisão e custos de cada uma), **Folga** (lançar e excluir a folga de um entregador), links da planilha e da pasta de arquivos. |
 
 **Turnos fixos e entregador da lista:** o turno é escolhido em botões (padrão: **08h-14h**, **12h-18h**, **18h-00h**) e o entregador numa lista com os **cadastrados e ativos** da tela Equipe. Não dá para digitar outro nome, então a planilha fica sempre com o mesmo turno e o nome completo do entregador (bom para exportar e comparar com outros relatórios). Quem não estiver na lista precisa ser cadastrado antes em Equipe → Novo.
 
@@ -91,6 +91,21 @@ O app usa a escala para:
 - **Painel:** faltas (escalado em dia passado sem turno lançado) e dias escalados no ranking.
 
 O formato antigo (`TR` nos dias) continua sendo lido, sem horário.
+
+## Folga (Mais → Folga)
+
+Para registrar o dia de folga de um entregador sem abrir a planilha: **Mais → Folga**, escolher o entregador (só cadastrados), o dia (vem com hoje) e, se quiser, uma observação (ex.: "troca com Felipe").
+
+O que acontece:
+- **REGISTRO DIÁRIO** ganha uma linha com a data, o nome completo do entregador, `FOLGA` na coluna Turno, a observação e quem lançou. Filtrando a coluna Turno por `FOLGA`, saem todas as folgas do período junto com os turnos.
+- **ESCALA:** o dia do entregador vira **F**. Se antes havia um turno (ex.: `12h-18h`), ele fica guardado numa **nota na célula** ("Folga lançada pelo app. Antes: 12h-18h").
+- **App:** quem está de folga hoje sai da "Escala de hoje" e não é sugerido na saída rápida. O dia de folga **não conta como falta** no ranking, mesmo que a escala diga que ele trabalharia.
+
+O app **não deixa**: lançar duas folgas no mesmo dia para a mesma pessoa, lançar folga em dia que já tem turno dela, nem lançar saída/turno para quem está de folga naquele dia (avisa para excluir a folga primeiro).
+
+**Lançou errado?** Em "Últimas folgas", toque em **Excluir**. A linha sai do REGISTRO DIÁRIO e a escala volta ao que era antes (pela nota). Se o F já estava na escala antes do lançamento (folga planejada), ele continua lá.
+
+Linhas `FOLGA` antigas, digitadas direto na planilha (coluna Moto ou Turno = `FOLGA`), também são reconhecidas.
 
 ## Pasta de fotos e documentos (quem pode ver)
 
